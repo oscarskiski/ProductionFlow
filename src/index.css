@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+:root {
+  --color-off-white: #F5F3EF;
+  --color-navy: #1C2B4A;
+  --color-orange: #E8944A;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background-color: var(--color-off-white);
+}
+
+#root {
+  min-height: 100vh;
+}

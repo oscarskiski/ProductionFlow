@@ -1,0 +1,1294 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import Sidebar from '../components/Sidebar'
+import TopbarActions from '../components/TopbarActions'
+import { useAppData } from '../store/AppDataContext'
+import { canEdit } from '../lib/auth'
+import { isoWeekDayToDate, isoWeek } from '../lib/scheduling'
+import {
+  buildScheduleRows, writeScheduleRows, cleanupOrphanScheduleRows,
+  shiftForDate, workDatesOfWeek, timeToMin, effectiveShiftMinutes,
+} from '../lib/scheduleEngine'
+import { setScheduleRowStatus } from '../lib/scheduleStatus'
+import { supabase } from '../lib/supabase'
+import {
+  Hammer, Scissors, Activity, Truck, Grid, ChevronLeft, ChevronRight,
+  Zap, AlertTriangle, Play, Pause, Square, GripVertical, Coffee,
+  ChevronsDown, ChevronsUp, Clock, Filter, Check,
+} from 'lucide-react'
+
+// Daily worklist per station. Each machine is a collapsible card; inside it,
+// schedule rows + shift breaks merge into one chronological list. Boss/Manager
+// clicks "Regenerate" to run the dispatcher (src/lib/scheduleEngine.js).
+// Workers click Start/Pause/Stop on a row to jump into MES Station for that
+// step.
+
+const DEPT_TABS = [
+  { id: 'all',  label: 'All',         Icon: Grid },
+  { id: 'steel', label: 'Steel',      Icon: Hammer },
+  { id: 'wood', label: 'Wood',        Icon: Scissors },
+  { id: 'upholstery', label: 'Upholstery', Icon: Activity },
+  { id: 'dispatch',   label: 'Dispatch',   Icon: Truck },
+]
+
+const DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI']
+
+// Department → header tint for the machine card title. Matches the rest of
+// the app's iOS-inspired palette.
+const DEPT_TINT = {
+  steel:      { ink: '#274d8e', soft: 'rgba(70,119,200,0.10)',  stripe: '#4677c8' },
+  wood:       { ink: '#9a611e', soft: 'rgba(232,154,60,0.10)',  stripe: '#e89a3c' },
+  upholstery: { ink: '#1e5d6c', soft: 'rgba(58,154,175,0.10)',  stripe: '#3a9aaf' },
+  dispatch:   { ink: '#5b3c84', soft: 'rgba(139,95,191,0.10)',  stripe: '#8b5fbf' },
+}
+
+const styles = `
+:root {
+  --bg: #f4f2ee; --bg-2: #ece8e0;
+  --surface: #ffffff; --surface-2: #fbf9f5; --surface-3: #f1eee7;
+  --ink: #1a1d24; --ink-2: #4a4e5a; --ink-3: #8a8e99;
+  --hairline: rgba(26,29,36,0.07); --hairline-2: rgba(26,29,36,0.12);
+  --navy: #1f2a44; --navy-soft: rgba(31,42,68,0.08);
+  --amber: #e89a3c; --amber-soft: rgba(232,154,60,0.14);
+  --red: #d2533a; --red-soft: rgba(210,83,58,0.10);
+  --green: #34c759; --green-soft: rgba(52,199,89,0.14);
+  --teal: #3a9aaf; --teal-soft: rgba(58,154,175,0.12);
+  --blue: #4677c8; --blue-soft: rgba(70,119,200,0.12);
+  --purple: #8b5fbf; --purple-soft: rgba(139,95,191,0.12);
+  --shadow-card: 0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 2px rgba(26,29,36,0.04), 0 8px 22px rgba(26,29,36,0.05);
+}
+[data-theme="dark"] {
+  --bg: #0e1118; --bg-2: #131722;
+  --surface: #1a1f2c; --surface-2: #20263488; --surface-3: #232938;
+  --ink: #f1f2f5; --ink-2: #b8bcc8; --ink-3: #7c8090;
+  --hairline: rgba(255,255,255,0.07); --hairline-2: rgba(255,255,255,0.12);
+}
+* { box-sizing: border-box; }
+html, body { margin:0; padding:0; min-height: 100vh; font-family: 'Inter', -apple-system, system-ui, sans-serif; color: var(--ink); letter-spacing: -0.01em; -webkit-font-smoothing: antialiased; background: radial-gradient(120% 80% at 50% 0%, var(--surface-2) 0%, var(--bg) 40%, var(--bg-2) 100%); }
+.main { padding: 18px 22px 30px; min-width: 0; }
+.topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.topbar h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.025em; margin: 0; line-height: 1.1; }
+.topbar .sub { font-size: 12px; color: var(--ink-2); margin-top: 3px; }
+.topbar-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ibtn { appearance: none; border: 1px solid var(--hairline-2); background: var(--surface); color: var(--ink); font: inherit; font-size: 12px; font-weight: 500; padding: 7px 11px; border-radius: 10px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; box-shadow: 0 1px 2px rgba(26,29,36,0.04); }
+.ibtn:hover { background: var(--surface-2); }
+.ibtn .ic { width: 13px; height: 13px; color: var(--ink-2); }
+.ibtn.primary { background: var(--navy); color: white; border-color: var(--navy); }
+.ibtn.primary:hover { filter: brightness(0.95); }
+.ibtn.primary .ic { color: white; }
+.ibtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Day strip ──────────────────────────────────────────────── */
+.day-strip { display: inline-flex; align-items: stretch; gap: 4px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 18px; padding: 6px; margin-bottom: 12px; box-shadow: var(--shadow-card); width: fit-content; }
+.day-strip .nav { width: 38px; border: 0; background: transparent; color: var(--ink-2); cursor: pointer; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; transition: background 120ms, color 120ms; }
+.day-strip .nav:hover { background: var(--surface-2); color: var(--navy); }
+.day-strip .week-pill { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; padding: 6px 14px; border-radius: 12px; background: var(--navy); color: white; min-width: 60px; gap: 0; line-height: 1.05; }
+.day-strip .week-pill .wk { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.75; }
+.day-strip .week-pill .wn { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.day-strip .day-pill { appearance: none; border: 0; background: transparent; cursor: pointer; padding: 8px 18px; border-radius: 12px; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; color: var(--ink-2); transition: background 120ms, color 120ms; position: relative; min-width: 86px; }
+.day-strip .day-pill:hover { background: var(--surface-2); }
+.day-strip .day-pill .dn { font-size: 11px; font-weight: 700; color: var(--ink-3); letter-spacing: 0.08em; }
+.day-strip .day-pill .dd { font-size: 22px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.05; }
+.day-strip .day-pill[aria-pressed="true"] { background: var(--amber); box-shadow: 0 4px 12px rgba(232,154,60,0.35), 0 1px 2px rgba(0,0,0,0.05); }
+.day-strip .day-pill[aria-pressed="true"] .dn { color: rgba(255,255,255,0.85); }
+.day-strip .day-pill[aria-pressed="true"] .dd { color: white; }
+.day-strip .day-pill.holiday { opacity: 0.4; cursor: not-allowed; }
+.day-strip .day-pill .dot { position: absolute; top: 7px; right: 14px; width: 7px; height: 7px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 2px var(--surface); }
+
+/* Dept tabs + collapse/expand row ─────────────────────────── */
+.controls-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.dept-tabs { display: inline-flex; gap: 4px; padding: 3px; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 12px; }
+.dept-tab { appearance: none; border: 0; background: transparent; color: var(--ink-2); font: inherit; font-size: 12px; font-weight: 500; padding: 7px 13px; border-radius: 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.dept-tab .ic { width: 13px; height: 13px; color: var(--ink-3); }
+.dept-tab[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 2px 4px rgba(26,29,36,0.05); font-weight: 600; }
+.dept-tab[aria-pressed="true"] .ic { color: var(--navy); }
+.spacer { flex: 1; }
+
+/* iOS-style switch — used in the "Only with work" toggle */
+.ios-switch { width: 38px; height: 22px; border-radius: 999px; background: rgba(120,120,128,0.32); border: 0; padding: 2px; cursor: pointer; display: inline-flex; align-items: center; transition: background 180ms; flex-shrink: 0; }
+.ios-switch.on { background: var(--green); }
+.ios-switch .knob { width: 18px; height: 18px; border-radius: 50%; background: white; box-shadow: 0 1px 1px rgba(0,0,0,0.1), 0 2px 4px rgba(0,0,0,0.18); transition: transform 200ms cubic-bezier(0.32,0.72,0,1); }
+.ios-switch.on .knob { transform: translateX(16px); }
+
+.toggle-pill { display: inline-flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--hairline-2); border-radius: 999px; padding: 5px 12px 5px 14px; cursor: pointer; user-select: none; box-shadow: 0 1px 2px rgba(26,29,36,0.04); }
+.toggle-pill:hover { background: var(--surface-2); }
+.toggle-pill .lbl { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.toggle-pill.on .lbl { color: var(--ink); }
+
+/* Machines filter button + popover */
+.filter-wrap { position: relative; }
+.filter-btn { appearance: none; border: 1px solid var(--hairline-2); background: var(--surface); color: var(--ink); font: inherit; font-size: 12px; font-weight: 600; padding: 7px 13px; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; box-shadow: 0 1px 2px rgba(26,29,36,0.04); }
+.filter-btn:hover { background: var(--surface-2); }
+.filter-btn.has-filter { background: var(--amber-soft); border-color: rgba(232,154,60,0.4); color: var(--amber); }
+.filter-btn .badge { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.filter-btn.has-filter .badge { background: var(--amber); color: white; }
+
+.filter-popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; min-width: 280px; max-height: 440px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline-2); border-radius: 14px; box-shadow: 0 12px 32px rgba(26,29,36,0.16), 0 4px 8px rgba(26,29,36,0.06); overflow: hidden; }
+.filter-popover .pop-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--hairline); background: var(--surface-2); }
+.filter-popover .pop-head .ttl { font-size: 12px; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.06em; }
+.filter-popover .pop-head .actions { display: flex; gap: 6px; }
+.filter-popover .pop-head button { appearance: none; border: 0; background: transparent; color: var(--navy); font: inherit; font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.filter-popover .pop-head button:hover { background: var(--surface); }
+.filter-popover .pop-list { overflow-y: auto; padding: 4px 0; }
+.filter-popover .pop-item { display: flex; align-items: center; gap: 10px; padding: 9px 14px; cursor: pointer; user-select: none; }
+.filter-popover .pop-item:hover { background: var(--surface-2); }
+.filter-popover .pop-item .cbx { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--hairline-2); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 120ms, border-color 120ms; }
+.filter-popover .pop-item.checked .cbx { background: var(--navy); border-color: var(--navy); color: white; }
+.filter-popover .pop-item .lbl { font-size: 13px; color: var(--ink); font-weight: 500; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.filter-popover .pop-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex-shrink: 0; }
+.filter-popover .pop-item .dot.has-work { background: var(--green); }
+
+/* Top progress bar + summary ─────────────────────────────── */
+.day-summary { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 16px; padding: 16px 22px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 18px; margin-bottom: 14px; box-shadow: var(--shadow-card); }
+.day-summary .endlabel { font-size: 13px; font-weight: 700; color: var(--ink-2); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.day-summary .bar { position: relative; height: 12px; border-radius: 999px; background: var(--surface-3); overflow: visible; box-shadow: inset 0 1px 2px rgba(0,0,0,0.04); }
+.day-summary .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: linear-gradient(90deg, var(--navy), #2c3a5d); box-shadow: 0 1px 3px rgba(31,42,68,0.30); }
+.day-summary .bar .break-tick { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(45deg, rgba(255,255,255,0.4), rgba(255,255,255,0.4) 3px, transparent 3px, transparent 6px); border-left: 1px solid rgba(0,0,0,0.06); border-right: 1px solid rgba(0,0,0,0.06); }
+.day-summary .bar .cursor { position: absolute; top: -5px; height: 22px; width: 4px; background: var(--amber); border-radius: 3px; box-shadow: 0 0 0 3px rgba(232,154,60,0.18), 0 4px 12px rgba(232,154,60,0.55); }
+.day-summary .bar .cursor-label { position: absolute; top: -32px; transform: translateX(-50%); background: var(--amber); color: white; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 7px; font-variant-numeric: tabular-nums; white-space: nowrap; box-shadow: 0 4px 10px rgba(232,154,60,0.35); }
+.day-summary .stats { font-size: 13px; color: var(--ink-2); display: flex; align-items: center; gap: 14px; font-weight: 500; }
+.day-summary .stats .item { display: inline-flex; align-items: baseline; gap: 5px; }
+.day-summary .stats .n { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; font-size: 15px; letter-spacing: -0.02em; }
+.day-summary .stats .lbl { font-size: 11px; color: var(--ink-3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.day-summary .stats .sep { color: var(--hairline-2); font-weight: 400; }
+.day-summary .stats .warn { color: var(--amber); font-weight: 700; }
+.day-summary .stats .warn .n { color: var(--amber); }
+
+/* Banner (gen result / overflow notice) ──────────────────── */
+.banner { background: var(--navy-soft); border: 1px solid rgba(31,42,68,0.18); border-radius: 14px; padding: 11px 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink); }
+.banner .ic { color: var(--navy); flex-shrink: 0; }
+.banner.warn { background: rgba(232,154,60,0.10); border-color: rgba(232,154,60,0.30); }
+.banner.warn .ic { color: var(--amber); }
+.banner strong { color: var(--ink); font-weight: 600; }
+
+.state { padding: 48px 16px; text-align: center; color: var(--ink-3); font-size: 13px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 18px; }
+.state.err { color: var(--red); }
+
+/* Machine card ──────────────────────────────────────────── */
+.machine-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 18px; margin-bottom: 10px; box-shadow: var(--shadow-card); overflow: hidden; position: relative; transition: box-shadow 180ms, border-color 180ms; }
+.machine-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--stripe, var(--ink-3)); }
+.machine-card:hover { box-shadow: 0 4px 14px rgba(26,29,36,0.06), var(--shadow-card); }
+.machine-card.idle::before { opacity: 0.35; }
+.machine-card.overflowed { border-color: rgba(232,154,60,0.4); box-shadow: 0 0 0 1px rgba(232,154,60,0.18), var(--shadow-card); }
+.mc-head { display: grid; grid-template-columns: 18px 1fr auto auto auto; gap: 18px; align-items: center; padding: 16px 22px 16px 26px; cursor: pointer; user-select: none; }
+.mc-head:hover { background: linear-gradient(90deg, var(--head-soft, transparent) 0, transparent 280px); }
+.mc-head .chev { color: var(--ink-3); transition: transform 180ms; flex-shrink: 0; }
+.machine-card.open .mc-head .chev { transform: rotate(90deg); color: var(--head-ink, var(--ink-2)); }
+.mc-head .name-block { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mc-head .name { font-size: 17px; font-weight: 700; color: var(--head-ink, var(--ink)); letter-spacing: -0.02em; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc-head .substats { font-size: 10px; color: var(--ink-3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; display: inline-flex; align-items: center; gap: 5px; }
+.mc-head .substats .idle-tag { color: var(--ink-3); font-style: italic; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 11px; }
+
+.mc-head .num-stack { display: flex; align-items: baseline; gap: 14px; }
+.mc-head .num-stack .num { display: flex; flex-direction: column; align-items: flex-end; line-height: 1; gap: 3px; }
+.mc-head .num-stack .num .v { font-size: 18px; font-weight: 700; color: var(--head-ink, var(--ink)); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.mc-head .num-stack .num .v.muted { color: var(--ink-3); }
+.mc-head .num-stack .num .k { font-size: 9px; color: var(--ink-3); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+
+.mc-head .mini-progress { width: 160px; height: 8px; background: var(--surface-3); border-radius: 999px; position: relative; overflow: hidden; box-shadow: inset 0 1px 2px rgba(0,0,0,0.04); }
+.mc-head .mini-progress { overflow: visible; }  /* allow the now-dot to extend above */
+.mc-head .mini-progress .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--stripe, var(--navy)); border-radius: 999px; transition: width 240ms ease-out; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+.mc-head .mini-progress.over .fill { background: var(--red); }
+/* Green "actually done" overlay — sits on the LEFT portion of the navy
+   fill. Width = actualDoneMin / budgetMin. Compared against the now-dot
+   (expected position) to read ahead/behind at a glance. */
+.mc-head .mini-progress .actual-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--green); border-radius: 999px; transition: width 600ms linear; box-shadow: 0 1px 2px rgba(0,0,0,0.12); z-index: 2; }
+/* Small dot floating above the bar at the expected position. Colour-coded:
+   green = on track/ahead, amber = slightly behind, red = behind. */
+.mc-head .mini-progress .now-dot { position: absolute; top: -7px; width: 10px; height: 10px; border-radius: 50%; background: var(--amber); transform: translateX(-50%); box-shadow: 0 2px 6px rgba(232,154,60,0.55), 0 0 0 2px var(--surface); transition: left 600ms linear, background 200ms; z-index: 3; }
+.mc-head .mini-progress .now-dot::after { content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%); width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; color: var(--amber); transition: color 200ms; }
+.mc-head .mini-progress .now-dot.status-good { background: var(--green); box-shadow: 0 2px 6px rgba(52,199,89,0.55), 0 0 0 2px var(--surface); }
+.mc-head .mini-progress .now-dot.status-good::after { color: var(--green); }
+.mc-head .mini-progress .now-dot.status-warn { background: var(--amber); box-shadow: 0 2px 6px rgba(232,154,60,0.55), 0 0 0 2px var(--surface); }
+.mc-head .mini-progress .now-dot.status-warn::after { color: var(--amber); }
+.mc-head .mini-progress .now-dot.status-bad { background: var(--red); box-shadow: 0 2px 6px rgba(210,83,58,0.55), 0 0 0 2px var(--surface); }
+.mc-head .mini-progress .now-dot.status-bad::after { color: var(--red); }
+.mc-head .mini-progress .now-dot.status-neutral { background: var(--ink-3); box-shadow: 0 1px 3px rgba(0,0,0,0.20), 0 0 0 2px var(--surface); }
+.mc-head .mini-progress .now-dot.status-neutral::after { color: var(--ink-3); }
+.mc-head .over-badge { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border-radius: 8px; background: var(--red); color: white; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; box-shadow: 0 2px 6px rgba(210,83,58,0.35); }
+
+.mc-body { display: none; border-top: 1px solid var(--hairline); }
+.machine-card.open .mc-body { display: block; }
+.empty-row { padding: 18px 22px; font-size: 12px; color: var(--ink-3); font-style: italic; }
+
+/* Rows inside machine card ──────────────────────────────── */
+.row { display: grid; grid-template-columns: 22px 24px 92px 84px 1fr auto auto; gap: 14px; align-items: center; padding: 12px 18px 12px 22px; }
+.row + .row { border-top: 1px solid var(--hairline); }
+.row:hover { background: var(--surface-2); }
+.row .drag { color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; cursor: grab; opacity: 0; transition: opacity 120ms; }
+.row:hover .drag { opacity: 1; }
+.row .seq { width: 22px; height: 22px; border-radius: 6px; background: var(--amber-soft); color: var(--amber); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+.row .when { font-size: 13px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.15; }
+.row .when .dash { color: var(--ink-3); margin: 0 2px; }
+.row .ord-pri { display: flex; flex-direction: column; gap: 2px; }
+.row .ord-pri .ord { font-size: 13px; font-weight: 700; color: var(--stripe, var(--navy)); }
+.row .ord-pri .pri { font-size: 9px; color: var(--ink-3); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.row .info { min-width: 0; }
+.row .info .part { font-size: 14px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em; line-height: 1.2; display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
+.row .info .part.stale { color: var(--amber); font-style: italic; font-weight: 600; }
+.row .info .asm-tag { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 5px; background: var(--blue-soft); color: var(--blue); font-size: 9px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; flex-shrink: 0; }
+.row .info .meta { font-size: 11px; color: var(--ink-3); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.row .info .meta .prod-tag { color: var(--ink-2); font-weight: 600; }
+.row .info .meta .setup-tag { color: var(--amber); font-weight: 600; }
+.row .parts { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; min-width: 84px; }
+.row .parts .count { font-size: 30px; font-weight: 700; color: var(--stripe, var(--ink)); line-height: 0.95; font-variant-numeric: tabular-nums; letter-spacing: -0.025em; }
+.row .parts .rate-label { font-size: 9px; color: var(--ink-3); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 5px; font-variant-numeric: tabular-nums; }
+.row .parts .rate-label .sep { color: var(--hairline-2); margin: 0 4px; font-weight: 400; }
+
+.action { appearance: none; border: 1px solid var(--hairline-2); background: var(--surface); color: var(--ink-2); font: inherit; font-size: 13px; font-weight: 600; padding: 9px 18px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; transition: filter 140ms, transform 140ms, box-shadow 200ms; min-width: 96px; justify-content: center; letter-spacing: -0.01em; }
+.action:hover { filter: brightness(0.98); transform: translateY(-1px); }
+.action:active { transform: translateY(0); }
+.action.start {
+  background: linear-gradient(180deg, #3fd66c 0%, #2bb058 100%);
+  border-color: #2bb058;
+  color: white;
+  box-shadow:
+    0 0 0 4px rgba(52,199,89,0.16),
+    0 6px 16px rgba(52,199,89,0.45),
+    inset 0 1px 0 rgba(255,255,255,0.25),
+    0 1px 2px rgba(0,0,0,0.06);
+}
+.action.start:hover {
+  box-shadow:
+    0 0 0 5px rgba(52,199,89,0.22),
+    0 10px 22px rgba(52,199,89,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.30),
+    0 1px 2px rgba(0,0,0,0.06);
+}
+.action.pause {
+  background: linear-gradient(180deg, #efa756 0%, #d8862e 100%);
+  border-color: #d8862e; color: white; min-width: 78px;
+  box-shadow: 0 4px 10px rgba(232,154,60,0.35), inset 0 1px 0 rgba(255,255,255,0.20), 0 1px 2px rgba(0,0,0,0.05);
+}
+.action.stop {
+  background: linear-gradient(180deg, #df6a52 0%, #c44529 100%);
+  border-color: #c44529; color: white; min-width: 72px;
+  box-shadow: 0 4px 10px rgba(210,83,58,0.35), inset 0 1px 0 rgba(255,255,255,0.20), 0 1px 2px rgba(0,0,0,0.05);
+}
+.action.queued { background: var(--surface-2); color: var(--ink-3); cursor: default; box-shadow: none; }
+.action.queued:hover { filter: none; transform: none; }
+.action.done { background: var(--surface-2); color: var(--ink-3); cursor: default; box-shadow: none; }
+.action.done:hover { filter: none; transform: none; }
+.action-pair { display: inline-flex; gap: 6px; }
+
+/* Break / cleaning row ─────────────────────────────────── */
+.break-row { display: grid; grid-template-columns: 22px 24px 92px 1fr auto; gap: 14px; align-items: center; padding: 10px 18px 10px 22px; background: var(--surface-2); }
+.break-row + .row, .row + .break-row, .break-row + .break-row { border-top: 1px solid var(--hairline); }
+.break-row .ic { color: var(--ink-3); }
+.break-row .spc { /* sequence-column placeholder */ }
+.break-row .when { font-size: 12px; font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.break-row .label { font-size: 11px; color: var(--ink-3); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.break-row .duration { font-size: 11px; color: var(--ink-3); font-weight: 600; font-variant-numeric: tabular-nums; }
+`
+
+// ============================================================
+// Helpers
+// ============================================================
+
+function fmtTime(t) {
+  // accepts "HH:MM:SS" or "HH:MM"
+  return t.slice(0, 5)
+}
+function durationLabel(startMin, endMin) {
+  const total = endMin - startMin
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  if (h === 0) return `${m}m`
+  if (m === 0) return `${h}h`
+  return `${h}h ${m}m`
+}
+
+// Build a merged list of {type:'job'|'break', start, end, ...} from a
+// machine's schedule rows + the shift's break list, sorted chronologically.
+function buildTimeline(jobs, shift) {
+  const items = []
+  for (const j of jobs) {
+    items.push({
+      type: 'job',
+      startMin: timeToMin(fmtTime(j.start_time)),
+      endMin: timeToMin(fmtTime(j.end_time)),
+      data: j,
+    })
+  }
+  for (const b of shift.breaks) {
+    items.push({
+      type: 'break',
+      startMin: timeToMin(b.start),
+      endMin: timeToMin(b.end),
+      label: b.label,
+    })
+  }
+  items.sort((a, b) => a.startMin - b.startMin)
+  return items
+}
+
+// Total work-minutes for a machine on a date — sum each job's work seconds
+// (seconds_per_part × total units) / 60, plus setup if includes_setup. Used
+// for the machine's progress bar against the effective shift budget.
+function workMinutesForJob(j) {
+  if (!j._step || !j._part || !j._order) return 0
+  // Prefer the row's own qty (engine writes this on split rows). Falls back
+  // to the full part quantity for legacy rows where qty is NULL.
+  const units = (j.qty != null && j.qty !== '')
+    ? Number(j.qty)
+    : (j._order.qty ?? 0) * (j._part.qty_per_unit ?? 1)
+  const workSecs = (j._step.seconds_per_part ?? 0) * units
+  const workMin = Math.ceil(workSecs / 60)
+  const setupMin = j.includes_setup ? (j._step.setup_time ?? 0) : 0
+  return workMin + setupMin
+}
+
+// ============================================================
+// Subcomponents
+// ============================================================
+
+function IOSSwitch({ on, onChange, label }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      className={`ios-switch ${on ? 'on' : ''}`}
+      onClick={() => onChange(!on)}
+    >
+      <span className="knob" />
+    </button>
+  )
+}
+
+function MachinesFilter({ machines, hiddenIds, onToggle, onShowAll, onHideAll, jobCountById }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const visibleCount = machines.length - hiddenIds.size
+
+  // Click outside to close.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const hasFilter = hiddenIds.size > 0
+
+  return (
+    <div className="filter-wrap" ref={ref}>
+      <button
+        type="button"
+        className={`filter-btn ${hasFilter ? 'has-filter' : ''}`}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Filter size={13} />
+        Machines
+        <span className="badge">{visibleCount}/{machines.length}</span>
+      </button>
+      {open && (
+        <div className="filter-popover">
+          <div className="pop-head">
+            <span className="ttl">Show machines</span>
+            <div className="actions">
+              <button onClick={onShowAll}>All</button>
+              <button onClick={onHideAll}>None</button>
+            </div>
+          </div>
+          <div className="pop-list">
+            {machines.map((m) => {
+              const checked = !hiddenIds.has(m.id)
+              const jobs = jobCountById.get(m.id) || 0
+              return (
+                <div
+                  key={m.id}
+                  className={`pop-item ${checked ? 'checked' : ''}`}
+                  onClick={() => onToggle(m.id)}
+                >
+                  <span className="cbx">
+                    {checked && <Check size={12} strokeWidth={3} />}
+                  </span>
+                  <span className="lbl">{m.name}</span>
+                  <span className={`dot ${jobs > 0 ? 'has-work' : ''}`} title={jobs > 0 ? `${jobs} job(s)` : 'no work'} />
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DayStrip({ week, day, year, holidaySet, overflowByDay, onWeekChange, onDayChange }) {
+  return (
+    <div className="day-strip">
+      <button className="nav" onClick={() => onWeekChange(week - 1)} aria-label="Previous week"><ChevronLeft size={16} /></button>
+      <div className="week-pill">
+        <span className="wk">WK</span>
+        <span className="wn">{week}</span>
+      </div>
+      {DAY_NAMES.map((name, i) => {
+        const dayIdx = i + 1
+        const date = isoWeekDayToDate(year, week, dayIdx)
+        const dd = String(date.getDate()).padStart(2, '0')
+        const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${dd}`
+        const isHol = holidaySet?.has(dateStr)
+        const isOverflow = overflowByDay?.get(dateStr)
+        return (
+          <button
+            key={name}
+            className={`day-pill ${isHol ? 'holiday' : ''}`}
+            aria-pressed={day === dayIdx}
+            onClick={() => !isHol && onDayChange(dayIdx)}
+            title={isHol ? 'Public holiday' : ''}
+          >
+            <span className="dn">{name}</span>
+            <span className="dd">{dd}</span>
+            {isOverflow && <span className="dot" />}
+          </button>
+        )
+      })}
+      <button className="nav" onClick={() => onWeekChange(week + 1)} aria-label="Next week"><ChevronRight size={16} /></button>
+    </div>
+  )
+}
+
+function DaySummary({ shiftStart, shiftEnd, shiftBreaks, nowMin, isToday, jobsTotal, partsTotal, overflowCount }) {
+  const span = shiftEnd - shiftStart
+  // Cursor only shows if "today" and within shift hours; otherwise hide it.
+  const cursorPct = isToday && nowMin >= shiftStart && nowMin <= shiftEnd ? ((nowMin - shiftStart) / span) * 100 : null
+  return (
+    <div className="day-summary">
+      <span className="endlabel">{minLabel(shiftStart)}</span>
+      <div className="bar">
+        {shiftBreaks.map((b, i) => {
+          const bs = timeToMin(b.start)
+          const be = timeToMin(b.end)
+          const left = ((bs - shiftStart) / span) * 100
+          const width = ((be - bs) / span) * 100
+          return <div key={i} className="break-tick" style={{ left: `${left}%`, width: `${width}%` }} />
+        })}
+        {cursorPct != null && (
+          <>
+            <div className="fill" style={{ width: `${cursorPct}%` }} />
+            <div className="cursor" style={{ left: `${cursorPct}%` }} />
+            <div className="cursor-label" style={{ left: `${cursorPct}%` }}>
+              {minLabel(nowMin)}
+            </div>
+          </>
+        )}
+      </div>
+      <span className="endlabel">{minLabel(shiftEnd)}</span>
+      <span className="stats">
+        <span className="item"><span className="n">{jobsTotal}</span><span className="lbl">jobs</span></span>
+        <span className="sep">·</span>
+        <span className="item"><span className="n">{partsTotal}</span><span className="lbl">parts</span></span>
+        {overflowCount > 0 && (
+          <>
+            <span className="sep">·</span>
+            <span className="item warn"><span className="n">{overflowCount}</span><span className="lbl">overflow</span></span>
+          </>
+        )}
+      </span>
+    </div>
+  )
+}
+
+function BreakRow({ startMin, endMin, label }) {
+  return (
+    <div className="break-row">
+      <Coffee size={13} className="ic" />
+      <span className="spc" />
+      <span className="when">{minLabel(startMin)}–{minLabel(endMin)}</span>
+      <span className="label">{label}</span>
+      <span className="duration">{durationLabel(startMin, endMin)}</span>
+    </div>
+  )
+}
+
+function minLabel(m) {
+  return `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`
+}
+
+function JobRow({ job, sequence, onAction, machine }) {
+  const startMin = timeToMin(fmtTime(job.start_time))
+  const endMin = timeToMin(fmtTime(job.end_time))
+  const dur = durationLabel(startMin, endMin)
+  const orderLabel = (job._order?.ord_nr || job._order?.kwitasie_nr)
+    ? `#${job._order.ord_nr || job._order.kwitasie_nr}`
+    : (job.order_id ? `#${job.order_id.slice(0,6)}` : '—')
+  const priority = job._order?.priority_rank ?? job._product?.default_priority ?? '—'
+  // Stale rows (step deleted) can't compute exact units — fall back to
+  // order.qty so the operator at least sees the order's total. The PARTS
+  // label gets a "?" caveat in that case.
+  const fullUnits = job._part
+    ? (job._order?.qty ?? 0) * (job._part.qty_per_unit ?? 1)
+    : (job._order?.qty ?? 0)
+  // Row's own qty (set by the engine when the step is split across days).
+  // Falls back to the full part qty when the column is NULL (legacy rows
+  // or steps that fit in one shift).
+  const totalUnits = (job.qty != null && job.qty !== '') ? Number(job.qty) : fullUnits
+  const isSplit = job.qty != null && Number(job.qty) < fullUnits
+  const ratePerPart = job._step?.seconds_per_part ?? 0
+  // Effective setup minutes shown on this row, when the dispatcher charged
+  // setup (includes_setup=true). Step.setup_time wins if set (legacy CSV),
+  // otherwise falls back to machine.setup_time_min — same rule the engine
+  // uses. Gives the operator visible proof that setup time was applied.
+  const setupShown = job.includes_setup
+    ? ((job._step?.setup_time && job._step.setup_time > 0)
+        ? job._step.setup_time
+        : (machine?.setup_time_min || 0))
+    : 0
+  const customer = job._customerName
+  const productName = job._productName
+  // Part name is what the operator actually does — promote it to the primary
+  // line. When the part chain is stale, show "Stale — regenerate" so the
+  // operator doesn't trust the row.
+  const partName = job._part?.name || (job._stale ? 'Stale — regenerate schedule' : productName)
+
+  const status = job.status || 'queued'
+  let actionEl
+  if (status === 'working') {
+    actionEl = (
+      <span className="action-pair">
+        <button className="action pause" onClick={() => onAction(job, 'pause')}><Pause size={11} /> Pause</button>
+        <button className="action stop"  onClick={() => onAction(job, 'stop')}><Square size={11} /> Stop</button>
+      </span>
+    )
+  } else if (status === 'paused') {
+    actionEl = <button className="action start" onClick={() => onAction(job, 'start')}><Play size={11} /> Resume</button>
+  } else if (status === 'completed') {
+    actionEl = <button className="action done" disabled>Done</button>
+  } else {
+    actionEl = <button className="action start" onClick={() => onAction(job, 'start')}><Play size={11} /> Start</button>
+  }
+
+  return (
+    <div className="row">
+      <span className="drag"><GripVertical size={14} /></span>
+      <span className="seq">{sequence}</span>
+      <div className="when">
+        {fmtTime(job.start_time)}<br/>
+        <span className="dash">→</span> {fmtTime(job.end_time)}
+      </div>
+      <div className="ord-pri">
+        <span className="ord">{orderLabel}</span>
+        <span className="pri">PRI {priority}</span>
+      </div>
+      <div className="info">
+        <div className={`part ${job._stale ? 'stale' : ''}`}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{partName}</span>
+          {job._part?.is_assembly && <span className="asm-tag" title="Assembly part — waits for all other parts to finish first">ASM</span>}
+          {job._stale && <AlertTriangle size={11} style={{ color: 'var(--amber)', flexShrink: 0 }} />}
+        </div>
+        <div className="meta">
+          {partName !== productName && productName && productName !== '—' && (
+            <><span className="prod-tag">{productName}</span> · </>
+          )}
+          {customer || '—'} · {job._step?.sequence ? `Step ${job._step.sequence}` : 'Step ?'} · {dur}
+          {setupShown > 0 && (
+            <span className="setup-tag" title={`Includes ${setupShown} min setup charged on this machine`}>
+              {' '}· +{setupShown}m setup
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="parts">
+        {/* Show qty_done from Part Tracking so the operator sees what's
+            already been ticked. Big number stays the planned qty; small
+            "X done" label only appears when there's progress. */}
+        <span className="count">{totalUnits || 0}</span>
+        <span className="rate-label">
+          {(job.qty_done ?? 0) > 0 && (
+            <>
+              <span style={{ color: 'var(--green)', fontWeight: 700 }}>
+                {job.qty_done} DONE
+              </span>
+              <span className="sep">·</span>
+            </>
+          )}
+          {isSplit ? `OF ${fullUnits} SPLIT` : (job._stale ? 'PARTS?' : 'PARTS')}
+          <span className="sep">·</span>
+          {ratePerPart}S/PT
+        </span>
+      </div>
+      {actionEl}
+    </div>
+  )
+}
+
+function MachineCard({ machine, jobs, shift, open, onToggle, onJobAction, nowMin, isToday }) {
+  const dept = machine.department
+  const tint = DEPT_TINT[dept] || DEPT_TINT.steel
+
+  const totalWorkMin = useMemo(() => jobs.reduce((s, j) => s + workMinutesForJob(j), 0), [jobs])
+  const totalParts = useMemo(() => jobs.reduce((s, j) => {
+    const tu = (j.qty != null && j.qty !== '')
+      ? Number(j.qty)
+      : (j._order && j._part ? (j._order.qty ?? 0) * (j._part.qty_per_unit ?? 1) : 0)
+    return s + tu
+  }, 0), [jobs])
+  const budgetMin = effectiveShiftMinutes(shift)
+  const pct = Math.min(100, (totalWorkMin / budgetMin) * 100)
+  const overflowed = totalWorkMin > budgetMin
+
+  // Expected scheduled progress at the current clock-time, mapped onto the
+  // viewed day's schedule. Walks every scheduled row: ended-before-now rows
+  // contribute their full work-min, straddle-now rows contribute the
+  // proportional fraction. The marker shows regardless of whether you're
+  // viewing today (so on weekends you can still see where the clock falls
+  // on a workday's schedule). Returns null only when there's nothing to mark.
+  const expectedDoneMin = useMemo(() => {
+    if (nowMin == null || jobs.length === 0) return null
+    let done = 0
+    for (const j of jobs) {
+      const startMin = timeToMin(j.start_time.slice(0, 5))
+      const endMin = timeToMin(j.end_time.slice(0, 5))
+      const wmin = workMinutesForJob(j)
+      if (endMin <= nowMin) { done += wmin }
+      else if (startMin < nowMin) {
+        const elapsed = nowMin - startMin
+        const span = Math.max(1, endMin - startMin)
+        done += wmin * (elapsed / span)
+      }
+    }
+    return done
+  }, [jobs, nowMin])
+  const nowMarkerPct = (expectedDoneMin != null && budgetMin > 0)
+    ? Math.min(100, (expectedDoneMin / budgetMin) * 100)
+    : null
+
+  // Actually-done work-min based on what we know:
+  //   * status='completed'             → full wmin
+  //   * status='working' + started_at  → elapsed minutes since start (capped)
+  //   * has qty_done > 0 (Part Tracking) → proportional wmin × (qty_done/qty)
+  //
+  // Tracking partial ticks are the most accurate signal, so they take
+  // priority over the "elapsed since started" estimate. The amber expected
+  // dot is what the schedule SHOULD have done by now; the green fill is what
+  // it ACTUALLY has done — gap between them tells you ahead/behind.
+  const actualDoneMin = useMemo(() => {
+    let done = 0
+    for (const j of jobs) {
+      const wmin = workMinutesForJob(j)
+      if (j.status === 'completed') {
+        done += wmin
+      } else if (j.qty > 0 && (j.qty_done ?? 0) > 0) {
+        done += wmin * (j.qty_done / j.qty)
+      } else if (j.status === 'working' && j.started_at) {
+        const startedMs = new Date(j.started_at).getTime()
+        if (!isNaN(startedMs)) {
+          const elapsedMin = Math.max(0, (Date.now() - startedMs) / 60000)
+          done += Math.min(wmin, elapsedMin)
+        }
+      }
+    }
+    return done
+  }, [jobs, nowMin])
+  const actualPct = (budgetMin > 0)
+    ? Math.min(100, (actualDoneMin / budgetMin) * 100)
+    : 0
+  // Status colour for the dot — green if ahead/on-time, red if behind by
+  // > 5% of total scheduled load, amber otherwise (slightly behind).
+  const trackStatus = useMemo(() => {
+    if (expectedDoneMin == null || expectedDoneMin <= 0) return 'neutral'
+    if (actualDoneMin >= expectedDoneMin) return 'good'
+    const gap = expectedDoneMin - actualDoneMin
+    if (gap > Math.max(15, totalWorkMin * 0.10)) return 'bad'
+    return 'warn'
+  }, [actualDoneMin, expectedDoneMin, totalWorkMin])
+
+  const items = useMemo(() => buildTimeline(jobs, shift), [jobs, shift])
+
+  const isIdle = jobs.length === 0
+  return (
+    <div
+      className={`machine-card ${open ? 'open' : ''} ${overflowed ? 'overflowed' : ''} ${isIdle ? 'idle' : ''}`}
+      style={{ '--stripe': tint.stripe, '--head-ink': tint.ink, '--head-soft': tint.soft }}
+    >
+      <div className="mc-head" onClick={onToggle}>
+        <ChevronRight size={16} className="chev" />
+        <div className="name-block">
+          <span className="name">{machine.name}</span>
+          <span className="substats">
+            {isIdle
+              ? <span className="idle-tag">No work today</span>
+              : <>{jobs.length} job{jobs.length === 1 ? '' : 's'} · {totalParts} parts · {totalWorkMin} of {budgetMin} min</>}
+          </span>
+        </div>
+        <div className="num-stack">
+          <div className="num">
+            <span className={`v ${isIdle ? 'muted' : ''}`}>{jobs.length}</span>
+            <span className="k">Jobs</span>
+          </div>
+          <div className="num">
+            <span className={`v ${isIdle ? 'muted' : ''}`}>{totalParts}</span>
+            <span className="k">Parts</span>
+          </div>
+        </div>
+        <div className={`mini-progress ${overflowed ? 'over' : ''}`} title={`${totalWorkMin} / ${budgetMin} min · done: ${Math.round(actualDoneMin)}${expectedDoneMin != null ? ` · expected: ${Math.round(expectedDoneMin)}` : ''}`}>
+          <div className="fill" style={{ width: `${pct}%` }} />
+          {actualPct > 0 && (
+            <div className="actual-fill" style={{ width: `${actualPct}%` }} />
+          )}
+          {nowMarkerPct != null && (
+            <div
+              className={`now-dot status-${trackStatus}`}
+              style={{ left: `${nowMarkerPct}%` }}
+              title={trackStatus === 'good' ? 'On track or ahead' : trackStatus === 'warn' ? 'Slightly behind' : trackStatus === 'bad' ? 'Behind schedule' : 'Where this machine should be by now'}
+            />
+          )}
+        </div>
+        {overflowed
+          ? <span className="over-badge"><AlertTriangle size={11} /> Overflow</span>
+          : <span style={{ width: 0 }} />}
+      </div>
+      {open && (
+        <div className="mc-body">
+          {jobs.length === 0 && items.length === 0 ? (
+            <div className="empty-row">No work scheduled for this machine today.</div>
+          ) : (
+            (() => {
+              let seq = 0
+              return items.map((it, i) => {
+                if (it.type === 'job') {
+                  seq++
+                  return (
+                    <JobRow key={`j${it.data.id}`} job={it.data} sequence={seq} onAction={onJobAction} machine={machine} />
+                  )
+                }
+                return <BreakRow key={`b${i}`} startMin={it.startMin} endMin={it.endMin} label={it.label} />
+              })
+            })()
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================================
+// Main screen
+// ============================================================
+export default function ScheduleScreen() {
+  const navigate = useNavigate()
+  const {
+    machines, schedule, machineSteps, parts,
+    productById, productByCode, partsByProduct, stepsByPart,
+    customerByCode, holidaySet,
+    enrichedOrders, machineByName,
+    loading, error,
+    applyScheduleRegenerate, applyScheduleByOrders, applyScheduleRowUpdate,
+  } = useAppData()
+  const canModify = canEdit()
+
+  const today = useMemo(() => new Date(), [])
+  // Reschedule on Tracking can stash a "jump-to" date in sessionStorage
+  // (key: schedule:jumpToDate, YYYY-MM-DD). When Schedule mounts and finds
+  // one, we open straight to that ISO week + day so the user doesn't have to
+  // hunt for where their leftovers landed. Cleared after use so it only
+  // fires once.
+  const jumpToDate = useMemo(() => {
+    try {
+      const v = sessionStorage.getItem('schedule:jumpToDate')
+      if (v) sessionStorage.removeItem('schedule:jumpToDate')
+      return v
+    } catch (_) {
+      return null
+    }
+  }, [])
+  const jumpDateObj = jumpToDate ? new Date(jumpToDate + 'T00:00:00') : null
+  const [year] = useState(() => (jumpDateObj || today).getFullYear())
+  const [week, setWeek] = useState(() => isoWeek(jumpDateObj || today))
+  const [day, setDay] = useState(() => {
+    const base = jumpDateObj || today
+    const dow = base.getDay() === 0 ? 7 : base.getDay()
+    return dow > 5 ? 1 : dow
+  })
+  const [dept, setDept] = useState('steel')
+  const [openMachines, setOpenMachines] = useState(() => new Set())
+  const [onlyWithWork, setOnlyWithWork] = useState(false)
+  const [hiddenMachineIds, setHiddenMachineIds] = useState(() => new Set())
+  const [generating, setGenerating] = useState(false)
+  const [genMsg, setGenMsg] = useState(null)
+  const [overflowMachineIds, setOverflowMachineIds] = useState(new Set())
+  const [nowTick, setNowTick] = useState(() => {
+    const now = new Date()
+    return now.getHours() * 60 + now.getMinutes()
+  })
+  // Tick the clock every minute so the live "now" markers on the day-summary
+  // bar and the per-machine progress bars update without a refresh.
+  useEffect(() => {
+    const update = () => {
+      const n = new Date()
+      setNowTick(n.getHours() * 60 + n.getMinutes())
+    }
+    const interval = setInterval(update, 60 * 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const selectedDate = useMemo(() => {
+    const d = isoWeekDayToDate(year, week, day)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }, [year, week, day])
+
+  const todayStr = useMemo(() => {
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  }, [today])
+
+  const dayShift = useMemo(() => shiftForDate(isoWeekDayToDate(year, week, day)), [year, week, day])
+
+  // Machines for the current dept tab (active only). "all" shows everything.
+  // Sort by the Machines screen's drag-to-reorder position (display_order)
+  // so the worklist matches the order the user set up. Name is the tiebreak
+  // for legacy rows whose display_order hasn't been set yet.
+  const deptMachines = useMemo(() => {
+    let list = (machines || []).filter((m) => m.active !== false)
+    if (dept !== 'all') list = list.filter((m) => m.department === dept)
+    return list.sort((a, b) => {
+      const aO = a.display_order ?? 0
+      const bO = b.display_order ?? 0
+      if (aO !== bO) return aO - bO
+      return a.name.localeCompare(b.name)
+    })
+  }, [machines, dept])
+
+  // Enrich schedule rows once: join order / step / part / product / customer.
+  const ordersById = useMemo(() => new Map((enrichedOrders || []).map((o) => [o.id, o])), [enrichedOrders])
+  const machineStepsById = useMemo(() => new Map((machineSteps || []).map((s) => [s.id, s])), [machineSteps])
+  const partsById = useMemo(() => new Map((parts || []).map((p) => [p.id, p])), [parts])
+
+  // Map machine_id → machine record, so we can name the SPECIFIC machine the
+  // row was dispatched to (which may be an alt, not the step's primary
+  // machine_name). Without this, MES Station would always show the step's
+  // primary machine name even when the dispatcher placed work on an alt.
+  const machineById = useMemo(() => new Map((machines || []).map((m) => [m.id, m])), [machines])
+
+  const enrichedRows = useMemo(() => {
+    let staleSeen = 0
+    const sample = []
+    const result = (schedule || []).map((row) => {
+      const step = machineStepsById.get(row.machine_step_id)
+      const part = step ? partsById.get(step.part_id) : null
+      const order = ordersById.get(row.order_id)
+      const assignedMachine = machineById.get(row.machine_id)
+      // Product resolution has two paths: through the part (step → part →
+      // product) for normal rows, OR through the order's product_code as a
+      // fallback when the step lookup fails (orphan schedule rows pointing
+      // at deleted machine_steps — typically left over after a Products edit
+      // destructively replaced parts). Order-path lookup keeps the row
+      // useful even when the step chain is broken; we still mark it stale.
+      const productFromPart = part ? productById.get(part.product_id) : null
+      const productFromOrder = order ? productByCode?.get(order.product_code) : null
+      const product = productFromPart || productFromOrder
+      const stale = !step || !part || !productFromPart
+      const customer = order ? customerByCode?.get(order.customer_code) : null
+      if (stale) {
+        staleSeen++
+        if (sample.length < 5) {
+          sample.push({
+            schedule_id: row.id,
+            machine_step_id: row.machine_step_id,
+            order_id: row.order_id,
+            order_kwit: order?.kwitasie_nr,
+            step_found: !!step,
+            part_found: !!part,
+            product_from_part: !!productFromPart,
+          })
+        }
+      }
+      return {
+        ...row,
+        _step: step,
+        _part: part,
+        _product: product,
+        _order: order,
+        _stale: stale,
+        // The machine that was actually picked at dispatch — may differ from
+        // _step.machine_name when the step has alts and the load-balancer
+        // chose a pool member other than the primary.
+        _assignedMachineName: assignedMachine?.name || step?.machine_name || '—',
+        _productName: product?.description || product?.code || (order?.product_code || '—'),
+        _customerName: customer?.name || order?.customer_code || '—',
+      }
+    })
+    if (staleSeen > 0) {
+      // Diagnostic — surfaces which rows can't resolve. Click "Clean stale"
+      // in the UI to delete them.
+      console.warn(`[Schedule] ${staleSeen} stale row(s) detected. Sample:`, sample)
+    }
+    return result
+  }, [schedule, machineStepsById, partsById, productById, productByCode, ordersById, customerByCode, machineById])
+
+  // Stale rows visible on the current day → drives the "Clean stale" banner.
+  const staleVisibleCount = useMemo(() => enrichedRows.filter((r) => r._stale && r.scheduled_date === selectedDate).length, [enrichedRows, selectedDate])
+  // ANY stale row across the schedule cache. Banner shows whenever this is
+  // non-zero so the user catches them even when viewing a clean day.
+  const staleTotalCount = useMemo(() => enrichedRows.filter((r) => r._stale).length, [enrichedRows])
+
+  // Jobs for selected day, grouped by machine, sorted by start_time.
+  // Hidden from this view:
+  //   * status='completed' — once Part Tracking marks a row done it's history
+  //   * orders the boss has ticked "ready for dispatch" — the order has left
+  //     the factory's active work, even if some queued rows remain
+  // Per-machine progress bars still read from the unfiltered enrichedRows so
+  // ahead/behind stays honest.
+  const jobsByMachine = useMemo(() => {
+    const byMachine = new Map()
+    for (const m of deptMachines) byMachine.set(m.id, [])
+    for (const row of enrichedRows) {
+      if (row.scheduled_date !== selectedDate) continue
+      if (row.status === 'completed') continue
+      if (row._order?.ready_for_dispatch_at) continue
+      const list = byMachine.get(row.machine_id)
+      if (!list) continue
+      list.push(row)
+    }
+    for (const list of byMachine.values()) list.sort((a, b) => a.start_time.localeCompare(b.start_time))
+    return byMachine
+  }, [enrichedRows, deptMachines, selectedDate])
+
+  // Which days of the current week have overflow? Show a red dot on those
+  // day pills. A day is overflowed if at least one of its machines is over
+  // capacity (sum work-min > shift budget).
+  const overflowByDay = useMemo(() => {
+    const m = new Map()
+    for (let d = 1; d <= 5; d++) {
+      const date = isoWeekDayToDate(year, week, d)
+      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+      const shift = shiftForDate(date)
+      const budget = effectiveShiftMinutes(shift)
+      // Tally per machine for this date.
+      const perMachine = new Map()
+      for (const row of enrichedRows) {
+        if (row.scheduled_date !== dateStr) continue
+        const w = workMinutesForJob(row)
+        perMachine.set(row.machine_id, (perMachine.get(row.machine_id) || 0) + w)
+      }
+      let overflowed = false
+      for (const v of perMachine.values()) {
+        if (v > budget) { overflowed = true; break }
+      }
+      if (overflowed) m.set(dateStr, true)
+    }
+    return m
+  }, [enrichedRows, year, week])
+
+  // Day-summary totals for the selected day.
+  const daySummary = useMemo(() => {
+    let jobs = 0, partsCount = 0, overflowCount = 0
+    const budget = effectiveShiftMinutes(dayShift)
+    for (const [, list] of jobsByMachine) {
+      jobs += list.length
+      let mWork = 0
+      for (const j of list) {
+        const tu = (j.qty != null && j.qty !== '')
+          ? Number(j.qty)
+          : (j._order && j._part ? (j._order.qty ?? 0) * (j._part.qty_per_unit ?? 1) : 0)
+        partsCount += tu
+        mWork += workMinutesForJob(j)
+      }
+      if (mWork > budget) overflowCount++
+    }
+    return { jobs, partsCount, overflowCount }
+  }, [jobsByMachine, dayShift])
+
+  // Collapse / expand helpers
+  const toggleMachine = (id) => setOpenMachines((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
+
+  // Visible machines = dept machines minus hidden ones, minus idle if the
+  // "Only with work" toggle is on. Filtering happens here so every consumer
+  // (rendering, collapse/expand, jobs-count badges) uses the same list.
+  const visibleMachines = useMemo(() => {
+    return deptMachines.filter((m) => {
+      if (hiddenMachineIds.has(m.id)) return false
+      if (onlyWithWork) {
+        const jobs = jobsByMachine.get(m.id) || []
+        if (jobs.length === 0) return false
+      }
+      return true
+    })
+  }, [deptMachines, hiddenMachineIds, onlyWithWork, jobsByMachine])
+
+  // Job count per machine — used by the MachinesFilter popover dots.
+  const jobCountByMachine = useMemo(() => {
+    const m = new Map()
+    for (const [id, list] of jobsByMachine) m.set(id, list.length)
+    return m
+  }, [jobsByMachine])
+
+  const expandAll = () => setOpenMachines(new Set(visibleMachines.map((m) => m.id)))
+  const collapseAll = () => setOpenMachines(new Set())
+
+  const toggleMachineVisibility = (id) => setHiddenMachineIds((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
+  const showAllMachines = () => setHiddenMachineIds(new Set())
+  const hideAllMachines = () => setHiddenMachineIds(new Set(deptMachines.map((m) => m.id)))
+
+  // Click any action (Start / Pause / Stop / Resume) → MES Station for that
+  // job. Status persistence happens inside MES Station.
+  const handleJobAction = async (job, kind) => {
+    // Build the status patch first — start/pause/stop write to Supabase and
+    // local cache. The per-machine bar can then show real "actually done"
+    // progress as a green sub-fill alongside the amber dot (expected), and
+    // the gap between them = ahead/behind.
+    let patch = null
+    const nowIso = new Date().toISOString()
+    if (kind === 'start') patch = { status: 'working', started_at: nowIso }
+    else if (kind === 'pause') patch = { status: 'paused' }
+    else if (kind === 'stop') patch = { status: 'completed', completed_at: nowIso }
+    if (patch) {
+      try {
+        const updated = await setScheduleRowStatus(job.id, patch)
+        applyScheduleRowUpdate(job.id, updated || patch)
+      } catch (e) {
+        window.alert(`Status update failed: ${e.message || String(e)}`)
+        return
+      }
+    }
+
+    // Start also navigates the operator into MES Station; stop/pause stay
+    // on the Schedule screen so the boss can carry on marking rows.
+    if (kind !== 'start') return
+
+    const order = job._order
+    const customer = order ? customerByCode?.get(order.customer_code) : null
+    const totalSteps = job._part ? (stepsByPart.get(job._part.id)?.length || 1) : 1
+    navigate('/mes-station', {
+      state: {
+        orderId: order?.ord_nr || order?.kwitasie_nr || '—',
+        productName: job._productName,
+        customerName: customer?.name || order?.customer_code || '—',
+        stepName: job._assignedMachineName || job._step?.machine_name || '—',
+        stepNumber: job._step?.sequence || 1,
+        totalSteps,
+        standardSeconds: job._step?.seconds_per_part || 0,
+        batchQty: order?.qty || 0,
+        priority: order?.priority_rank ?? order?.default_priority ?? '—',
+        machineName: job._assignedMachineName || job._step?.machine_name || '—',
+        scheduledStart: fmtTime(job.start_time),
+        scheduledEnd: fmtTime(job.end_time),
+        scheduleId: job.id,
+        scheduledQty: job.qty ?? order?.qty ?? 0,
+        qtyAlreadyDone: job.qty_done ?? 0,
+      },
+    })
+  }
+
+  // Audit-only cleanup that the user can run independently of regenerate.
+  const handleCleanStale = async () => {
+    if (!canModify) return
+    try {
+      const validStepIds = new Set((machineSteps || []).map((s) => s.id))
+      const removed = await cleanupOrphanScheduleRows({ validStepIds })
+      // Refetch this week's schedule rows so local state matches server.
+      const weekDates = workDatesOfWeek(week, year, holidaySet || new Set())
+      const { data: refreshed, error: rErr } = await supabase
+        .from('schedule')
+        .select('id, order_id, machine_id, machine_step_id, scheduled_date, start_time, end_time, position, status, includes_setup, qty, qty_done, started_at, completed_at')
+        .in('scheduled_date', weekDates)
+      if (rErr) throw new Error(rErr.message)
+      applyScheduleRegenerate(weekDates, (refreshed || []).filter((r) => r.status === 'queued'))
+      setGenMsg(removed === 0
+        ? 'No stale rows found. Schedule is clean.'
+        : `Cleaned ${removed} orphan schedule row(s). Run Regenerate to refill the gaps.`)
+    } catch (e) {
+      setGenMsg(`Cleanup failed: ${e.message || String(e)}`)
+    }
+  }
+
+  const handleGenerate = async () => {
+    if (!canModify || generating) return
+    setGenerating(true)
+    setGenMsg(null)
+    try {
+      // Pre-cleanup: orphan queued rows whose machine_step_id no longer
+      // matches a known step. Belt-and-braces in case the FK CASCADE missed
+      // some after a Products edit.
+      const validStepIds = new Set((machineSteps || []).map((s) => s.id))
+      const orphansRemoved = await cleanupOrphanScheduleRows({ validStepIds })
+
+      const sortedOrders = [...(enrichedOrders || [])]
+        .filter((o) => o.prod_week === week)
+        .sort((a, b) => {
+          const aCr = a.cr ?? Number.POSITIVE_INFINITY
+          const bCr = b.cr ?? Number.POSITIVE_INFINITY
+          if (aCr !== bCr) return aCr - bCr
+          return (b.total_minutes || 0) - (a.total_minutes || 0)
+        })
+
+      if (sortedOrders.length === 0) {
+        setGenMsg(`No orders found for week ${week}. Set prod_week from Priority screen first.`)
+        return
+      }
+      const ordersWithIds = sortedOrders.filter((o) => o.id)
+
+      const { rows, summary } = buildScheduleRows({
+        weekNumber: week, year,
+        orders: ordersWithIds,
+        partsByProductId: partsByProduct,
+        stepsByPartId: stepsByPart,
+        productByCode,
+        machineByName,
+        holidaySet: holidaySet || new Set(),
+      })
+
+      const orderIds = ordersWithIds.map((o) => o.id)
+      const { inserted, rows: insertedRows } = await writeScheduleRows({ orderIds, rows })
+      applyScheduleByOrders(orderIds, insertedRows)
+      setOverflowMachineIds(new Set(summary.overflowedMachineIds))
+      const skippedTotal = Object.values(summary.skipped).reduce((a, n) => a + n, 0)
+      setGenMsg(`Generated ${inserted} schedule rows for week ${week}.${orphansRemoved > 0 ? ` Cleaned ${orphansRemoved} orphan row(s).` : ''}${skippedTotal > 0 ? ` Skipped ${skippedTotal} step(s).` : ''}`)
+    } catch (e) {
+      setGenMsg(`Generation failed: ${e.message || String(e)}`)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const shiftStartMin = timeToMin(dayShift.start)
+  const shiftEndMin = timeToMin(dayShift.end)
+  const isToday = selectedDate === todayStr
+
+  return (
+    <>
+      <style>{styles}</style>
+      <div className="app">
+        <Sidebar />
+        <main className="main">
+          <div className="topbar">
+            <div>
+              <h1>Machine Schedules</h1>
+              <div className="sub">Daily worklist per station · jobs run top → bottom · click a job to open MES Station</div>
+            </div>
+            <div className="topbar-actions">
+              <TopbarActions />
+              {canModify && (
+                <button className="ibtn primary" onClick={handleGenerate} disabled={generating}>
+                  <Zap size={13} className="ic" /> {generating ? 'Generating…' : 'Regenerate'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          <DayStrip
+            week={week}
+            day={day}
+            year={year}
+            holidaySet={holidaySet || new Set()}
+            overflowByDay={overflowByDay}
+            onWeekChange={(w) => setWeek(Math.max(1, Math.min(53, w)))}
+            onDayChange={setDay}
+          />
+
+          <div className="controls-row">
+            <div className="dept-tabs">
+              {DEPT_TABS.map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  className="dept-tab"
+                  aria-pressed={dept === id}
+                  onClick={() => setDept(id)}
+                >
+                  <Icon size={12} className="ic" /> {label}
+                </button>
+              ))}
+            </div>
+            <span className="spacer" />
+            <span
+              className={`toggle-pill ${onlyWithWork ? 'on' : ''}`}
+              onClick={() => setOnlyWithWork((v) => !v)}
+              role="button"
+            >
+              <IOSSwitch on={onlyWithWork} onChange={setOnlyWithWork} label="Only machines with work" />
+              <span className="lbl">Only with work</span>
+            </span>
+            <MachinesFilter
+              machines={deptMachines}
+              hiddenIds={hiddenMachineIds}
+              onToggle={toggleMachineVisibility}
+              onShowAll={showAllMachines}
+              onHideAll={hideAllMachines}
+              jobCountById={jobCountByMachine}
+            />
+            <button className="ibtn" onClick={collapseAll}><ChevronsUp size={13} className="ic" /> Collapse all</button>
+            <button className="ibtn" onClick={expandAll}><ChevronsDown size={13} className="ic" /> Expand all</button>
+          </div>
+
+          <DaySummary
+            shiftStart={shiftStartMin}
+            shiftEnd={shiftEndMin}
+            shiftBreaks={dayShift.breaks}
+            nowMin={nowTick}
+            isToday={isToday}
+            jobsTotal={daySummary.jobs}
+            partsTotal={daySummary.partsCount}
+            overflowCount={daySummary.overflowCount}
+          />
+
+          {genMsg && (
+            <div className="banner">
+              <Zap size={15} className="ic" />
+              <div>{genMsg}</div>
+            </div>
+          )}
+
+          {overflowMachineIds.size > 0 && (
+            <div className="banner warn">
+              <AlertTriangle size={15} className="ic" />
+              <div><strong>{overflowMachineIds.size} machine(s) overflowed</strong> during generation — work was pushed to a later working day. Open the affected machine to see what spilled.</div>
+            </div>
+          )}
+
+          {staleTotalCount > 0 && canModify && (
+            <div className="banner warn" style={{ alignItems: 'center' }}>
+              <AlertTriangle size={15} className="ic" />
+              <div style={{ flex: 1 }}>
+                <strong>{staleTotalCount} stale row(s)</strong>
+                {staleVisibleCount > 0 ? ` (${staleVisibleCount} on this day)` : ' (none on this day)'}
+                {' '}reference deleted steps from a Products edit. Click Clean stale, then Regenerate to rebuild.
+              </div>
+              <button className="ibtn" onClick={handleCleanStale}>Clean stale</button>
+            </div>
+          )}
+
+          {loading && <div className="state">Loading schedule…</div>}
+          {error && <div className="state err">{error}</div>}
+
+          {!loading && !error && (
+            deptMachines.length === 0 ? (
+              <div className="state">No machines for this department. Seed machines on the Import screen first.</div>
+            ) : visibleMachines.length === 0 ? (
+              <div className="state">
+                {onlyWithWork
+                  ? 'No machines have work today. Click "Only with work" to see idle stations, or hit Regenerate to dispatch this week.'
+                  : 'All machines in this department are hidden. Open the Machines filter to bring some back.'}
+              </div>
+            ) : (
+              visibleMachines.map((m) => (
+                <MachineCard
+                  key={m.id}
+                  machine={m}
+                  jobs={jobsByMachine.get(m.id) || []}
+                  shift={dayShift}
+                  open={openMachines.has(m.id)}
+                  onToggle={() => toggleMachine(m.id)}
+                  onJobAction={handleJobAction}
+                  nowMin={nowTick}
+                  isToday={isToday}
+                />
+              ))
+            )
+          )}
+        </main>
+      </div>
+    </>
+  )
+}
