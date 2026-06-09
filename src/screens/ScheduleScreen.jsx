@@ -14,7 +14,7 @@ import { supabase } from '../lib/supabase'
 import {
   Hammer, Scissors, Activity, Truck, Grid, ChevronLeft, ChevronRight,
   Zap, AlertTriangle, Play, Pause, Square, GripVertical, Coffee,
-  ChevronsDown, ChevronsUp, Clock, Filter, Check,
+  ChevronsDown, ChevronsUp, Clock, Filter, Check, Printer,
 } from 'lucide-react'
 
 // Daily worklist per station. Each machine is a collapsible card; inside it,
@@ -137,6 +137,12 @@ html, body { margin:0; padding:0; min-height: 100vh; font-family: 'Inter', -appl
 .filter-popover .pop-item .lbl { font-size: 13px; color: var(--ink); font-weight: 500; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .filter-popover .pop-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex-shrink: 0; }
 .filter-popover .pop-item .dot.has-work { background: var(--green); }
+.filter-popover .pop-item .jobcount { font-size: 11px; font-weight: 700; color: var(--ink-3); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.filter-popover .pop-foot { padding: 10px 12px; border-top: 1px solid var(--hairline); background: var(--surface-2); }
+.filter-popover .pop-foot .print-go { width: 100%; appearance: none; border: 0; background: var(--navy); color: #fff; font: inherit; font-size: 12px; font-weight: 600; padding: 9px 12px; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.filter-popover .pop-foot .print-go:hover { filter: brightness(0.96); }
+.filter-popover .pop-foot .print-go:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
+.filter-popover .pop-empty { padding: 16px 14px; font-size: 12px; color: var(--ink-3); }
 
 /* Top progress bar + summary ─────────────────────────────── */
 .day-summary { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 16px; padding: 16px 22px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 18px; margin-bottom: 14px; box-shadow: var(--shadow-card); }
@@ -282,6 +288,85 @@ html, body { margin:0; padding:0; min-height: 100vh; font-family: 'Inter', -appl
 `
 
 // ============================================================
+// Print run-sheets (dense-grid form)
+// ------------------------------------------------------------
+// Hidden on screen, shown only on print. One A4 portrait sheet per machine
+// that has work on the selected day. Layout mirrors the floor's run sheet:
+// header + counts, fill-in row, dense grid (qty boxes, "actual finish" write
+// column, tick boxes), shift-break bands, and a sign-off footer. Every class
+// is namespaced `pf-` so it can never touch the live app UI.
+// ============================================================
+const printStyles = `
+.print-root { display: none; }
+@media print {
+  body { background: #fff !important; }
+  /* Hide everything in the app except the run-sheets. */
+  .app > *:not(.print-root) { display: none !important; }
+  .print-root { display: block !important; }
+  @page { size: A4 portrait; margin: 12mm; }
+  .pf-page { page-break-after: always; }
+  .pf-page:last-child { page-break-after: auto; }
+  .pf-table { page-break-inside: auto; }
+  .pf-table tr { page-break-inside: avoid; }
+}
+.print-root {
+  --pf-ink:#1c1c1a; --pf-muted:#76746e; --pf-faint:#a9a7a0;
+  --pf-paper:#ffffff; --pf-line:#cdcbc4; --pf-line-strong:#8d8b84;
+  --pf-zebra:#f1f0ea; --pf-accent:#1f2a44;
+  --pf-break:#fbf1dc; --pf-break-line:#e6c97a; --pf-write:#fffdf5;
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  color: var(--pf-ink); -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.pf-page { width:100%; background:var(--pf-paper); color:var(--pf-ink); }
+.pf-page + .pf-page { margin-top:40px; }
+.pf-head { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; border-bottom:2.5px solid var(--pf-ink); padding-bottom:12px; margin-bottom:4px; }
+.pf-machine { font-size:25px; font-weight:800; letter-spacing:-.3px; line-height:1; }
+.pf-machine small { font-weight:600; font-size:13px; color:var(--pf-muted); }
+.pf-logo { height:56px; width:auto; max-width:220px; object-fit:contain; flex:none; align-self:flex-start; }
+.pf-meta { display:flex; gap:22px; font-size:11px; color:var(--pf-muted); margin-top:6px; }
+.pf-meta b { color:var(--pf-ink); font-weight:700; }
+.pf-fillrow { display:flex; margin:10px 0 14px; border:1.5px solid var(--pf-ink); }
+.pf-fillrow .pf-f { flex:1; border-right:1px solid var(--pf-line-strong); padding:5px 9px; }
+.pf-fillrow .pf-f:last-child { border-right:none; }
+.pf-fillrow .pf-lab { font-size:9px; text-transform:uppercase; letter-spacing:.6px; color:var(--pf-muted); }
+.pf-fillrow .pf-val { min-height:17px; font-size:12px; font-weight:600; padding-top:2px; }
+.pf-table { width:100%; border-collapse:collapse; }
+.pf-table thead th { font-size:9px; text-transform:uppercase; letter-spacing:.7px; color:#fff; background:var(--pf-ink); padding:6px 7px; text-align:left; font-weight:700; border-right:1px solid #45433d; }
+.pf-table thead th:last-child { border-right:none; }
+.pf-table tbody td { padding:5px 7px; border-bottom:1px solid var(--pf-line); border-right:1px solid var(--pf-line); vertical-align:middle; }
+.pf-table tbody td:last-child { border-right:none; }
+.pf-table tbody tr.pf-job:nth-of-type(odd) td { background:var(--pf-zebra); }
+.pf-c-n { width:24px; text-align:center; color:var(--pf-muted); font-weight:700; font-size:11px; }
+.pf-order { color:var(--pf-accent); font-weight:800; font-size:12px; white-space:nowrap; }
+.pf-part { font-weight:700; font-size:13px; line-height:1.15; }
+.pf-asm { display:inline-block; margin-left:5px; padding:0 5px; border-radius:4px; background:#e6edf7; color:#2b59a8; font-size:8px; font-weight:700; letter-spacing:.5px; vertical-align:middle; }
+.pf-setup { color:#b8860b; font-weight:600; font-size:9px; }
+.pf-product { font-size:10.5px; color:var(--pf-muted); line-height:1.15; }
+.pf-tpu { font-variant-numeric:tabular-nums; font-weight:600; font-size:11px; white-space:nowrap; }
+.pf-tpu small { color:var(--pf-faint); font-weight:500; }
+.pf-sched { font-variant-numeric:tabular-nums; font-size:11px; white-space:nowrap; }
+.pf-sched .pf-arr { color:var(--pf-faint); }
+.pf-sched b { font-weight:700; }
+.pf-qtybox { display:inline-flex; align-items:center; justify-content:center; min-width:34px; height:30px; padding:0 6px; border:2px solid var(--pf-ink); border-radius:5px; font-weight:800; font-size:18px; line-height:1; background:#fff; }
+.pf-c-qty { text-align:center; width:54px; }
+.pf-c-fin { width:96px; background:var(--pf-write); }
+.pf-finline { height:24px; border-bottom:1.6px dashed var(--pf-line-strong); }
+.pf-c-done { width:30px; text-align:center; }
+.pf-tick { display:inline-block; width:17px; height:17px; border:1.8px solid var(--pf-ink); border-radius:3px; background:#fff; }
+.pf-table tbody tr.pf-brk td { background:var(--pf-break); border-top:1.5px solid var(--pf-break-line); border-bottom:1.5px solid var(--pf-break-line); padding:5px 9px; }
+.pf-brk-inner { display:flex; align-items:center; gap:12px; font-weight:700; }
+.pf-brk-inner .pf-bt { font-variant-numeric:tabular-nums; font-size:11px; color:#8a6d1e; font-weight:700; }
+.pf-brk-inner .pf-bl { font-size:13px; letter-spacing:1px; color:#7a5f15; text-transform:uppercase; }
+.pf-brk-inner .pf-bd { margin-left:auto; font-size:11px; color:#8a6d1e; font-weight:700; }
+.pf-signoff { display:flex; margin-top:16px; border:1.5px solid var(--pf-ink); }
+.pf-signoff .pf-s { flex:1; padding:7px 10px 16px; border-right:1px solid var(--pf-line-strong); }
+.pf-signoff .pf-s:last-child { border-right:none; }
+.pf-signoff .pf-lab { font-size:9px; text-transform:uppercase; letter-spacing:.6px; color:var(--pf-muted); }
+.pf-foot { display:flex; justify-content:space-between; margin-top:10px; font-size:9.5px; color:var(--pf-faint); text-transform:capitalize; }
+.pf-empty { padding:60px; text-align:center; color:var(--pf-muted); font-size:13px; }
+`
+
+// ============================================================
 // Helpers
 // ============================================================
 
@@ -412,6 +497,81 @@ function MachinesFilter({ machines, hiddenIds, onToggle, onShowAll, onHideAll, j
                 </div>
               )
             })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Dropdown that lets the user pick which machines get a printed run sheet,
+// then fires the print. Lists only machines that have work on the selected
+// day. Mirrors MachinesFilter's look; "checked" = will be printed.
+function PrintPicker({ machines, excludedIds, onToggle, onAll, onNone, jobCountById, onPrint }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const selectedCount = machines.filter((m) => !excludedIds.has(m.id)).length
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const doPrint = () => {
+    setOpen(false)
+    onPrint()
+  }
+
+  return (
+    <div className="filter-wrap" ref={ref}>
+      <button
+        type="button"
+        className="ibtn"
+        onClick={() => setOpen((o) => !o)}
+        title="Choose machines, then print a run sheet for each"
+      >
+        <Printer size={13} className="ic" /> Print day
+      </button>
+      {open && (
+        <div className="filter-popover">
+          <div className="pop-head">
+            <span className="ttl">Print machines</span>
+            <div className="actions">
+              <button onClick={onAll}>All</button>
+              <button onClick={onNone}>None</button>
+            </div>
+          </div>
+          <div className="pop-list">
+            {machines.length === 0 ? (
+              <div className="pop-empty">No machines have work on this day.</div>
+            ) : (
+              machines.map((m) => {
+                const checked = !excludedIds.has(m.id)
+                const jobs = jobCountById.get(m.id) || 0
+                return (
+                  <div
+                    key={m.id}
+                    className={`pop-item ${checked ? 'checked' : ''}`}
+                    onClick={() => onToggle(m.id)}
+                  >
+                    <span className="cbx">
+                      {checked && <Check size={12} strokeWidth={3} />}
+                    </span>
+                    <span className="lbl">{m.name}</span>
+                    <span className="jobcount" title={`${jobs} job(s)`}>{jobs}</span>
+                  </div>
+                )
+              })
+            )}
+          </div>
+          <div className="pop-foot">
+            <button className="print-go" onClick={doPrint} disabled={selectedCount === 0}>
+              <Printer size={13} /> Print {selectedCount} sheet{selectedCount === 1 ? '' : 's'}
+            </button>
           </div>
         </div>
       )}
@@ -768,6 +928,172 @@ function MachineCard({ machine, jobs, shift, open, onToggle, onJobAction, nowMin
 }
 
 // ============================================================
+// Print run-sheet subcomponents
+// ============================================================
+
+// Same display rules as JobRow, distilled to the fields the printed grid
+// needs. Kept in lock-step with JobRow so the paper sheet matches the screen.
+function jobPrintFields(job, machine) {
+  const orderLabel = (job._order?.ord_nr || job._order?.kwitasie_nr)
+    ? `${job._order.ord_nr || job._order.kwitasie_nr}`
+    : (job.order_id ? job.order_id.slice(0, 6) : '—')
+  const productName = job._productName
+  const partName = job._part?.name || (job._stale ? 'Stale — regenerate schedule' : productName)
+  const fullUnits = job._part
+    ? (job._order?.qty ?? 0) * (job._part.qty_per_unit ?? 1)
+    : (job._order?.qty ?? 0)
+  const totalUnits = (job.qty != null && job.qty !== '') ? Number(job.qty) : fullUnits
+  const ratePerPart = job._step?.seconds_per_part ?? 0
+  const setupShown = job.includes_setup
+    ? ((job._step?.setup_time && job._step.setup_time > 0)
+        ? job._step.setup_time
+        : (machine?.setup_time_min || 0))
+    : 0
+  return {
+    orderLabel, productName, partName, totalUnits, ratePerPart, setupShown,
+    isAsm: !!job._part?.is_assembly,
+    start: fmtTime(job.start_time),
+    stop: fmtTime(job.end_time),
+  }
+}
+
+function PrintSheet({ machine, jobs, shift, dateLabel, dayName, weekNum }) {
+  const items = buildTimeline(jobs, shift)
+  const partsTotal = jobs.reduce((s, j) => {
+    const tu = (j.qty != null && j.qty !== '')
+      ? Number(j.qty)
+      : (j._order && j._part ? (j._order.qty ?? 0) * (j._part.qty_per_unit ?? 1) : 0)
+    return s + tu
+  }, 0)
+  const workMin = jobs.reduce((s, j) => s + workMinutesForJob(j), 0)
+  let seq = 0
+  return (
+    <div className="pf-page">
+      <div className="pf-head">
+        <div>
+          <div className="pf-machine">{machine.name} <small>· run sheet</small></div>
+          <div className="pf-meta">
+            <span><b>{jobs.length}</b> jobs</span>
+            <span><b>{partsTotal}</b> parts</span>
+            <span><b>{workMin}</b> min planned</span>
+          </div>
+        </div>
+        <img
+          className="pf-logo"
+          src={`${import.meta.env.BASE_URL}logo-steel.jpg`}
+          alt="elmo's Furniture — Steel Department"
+          onError={(e) => {
+            // Steel-dept logo not on disk yet → fall back to the brand logo.
+            // If that's missing too, hide rather than show a broken image.
+            // BASE_URL prefix keeps paths correct under the GitHub Pages subfolder.
+            const img = e.currentTarget
+            if (!img.dataset.fellBack) {
+              img.dataset.fellBack = '1'
+              img.src = `${import.meta.env.BASE_URL}logo.png`
+            } else {
+              img.style.display = 'none'
+            }
+          }}
+        />
+      </div>
+      <div className="pf-fillrow">
+        <div className="pf-f"><div className="pf-lab">Date</div><div className="pf-val">{dateLabel}</div></div>
+        <div className="pf-f"><div className="pf-lab">Day</div><div className="pf-val">{dayName} · Wk {weekNum}</div></div>
+        <div className="pf-f"><div className="pf-lab">Operator</div><div className="pf-val" /></div>
+        <div className="pf-f"><div className="pf-lab">Shift</div><div className="pf-val">{fmtTime(shift.start)}–{fmtTime(shift.end)}</div></div>
+      </div>
+      <table className="pf-table">
+        <thead>
+          <tr>
+            <th className="pf-c-n">#</th>
+            <th>Order</th>
+            <th>Product</th>
+            <th>Part</th>
+            <th style={{ textAlign: 'center' }}>Qty</th>
+            <th>T/unit</th>
+            <th>Scheduled</th>
+            <th>Actual finish</th>
+            <th style={{ textAlign: 'center' }}>✓</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((it, i) => {
+            if (it.type === 'break') {
+              return (
+                <tr className="pf-brk" key={`b${i}`}>
+                  <td colSpan={9}>
+                    <div className="pf-brk-inner">
+                      <span className="pf-bt">{minLabel(it.startMin)}–{minLabel(it.endMin)}</span>
+                      <span className="pf-bl">{it.label}</span>
+                      <span className="pf-bd">{durationLabel(it.startMin, it.endMin)}</span>
+                    </div>
+                  </td>
+                </tr>
+              )
+            }
+            seq++
+            const f = jobPrintFields(it.data, machine)
+            return (
+              <tr className="pf-job" key={`j${it.data.id}`}>
+                <td className="pf-c-n">{seq}</td>
+                <td className="pf-order">#{f.orderLabel}</td>
+                <td className="pf-product">{f.productName}</td>
+                <td className="pf-part">
+                  {f.partName}
+                  {f.isAsm && <span className="pf-asm">ASM</span>}
+                  {f.setupShown > 0 && <span className="pf-setup"> +{f.setupShown}m setup</span>}
+                </td>
+                <td className="pf-c-qty"><span className="pf-qtybox">{f.totalUnits || 0}</span></td>
+                <td className="pf-tpu">{f.ratePerPart}<small>s/pt</small></td>
+                <td className="pf-sched"><b>{f.start}</b> <span className="pf-arr">→</span> {f.stop}</td>
+                <td className="pf-c-fin"><div className="pf-finline" /></td>
+                <td className="pf-c-done"><span className="pf-tick" /></td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <div className="pf-signoff">
+        <div className="pf-s"><div className="pf-lab">Operator signature</div></div>
+        <div className="pf-s"><div className="pf-lab">Parts completed</div></div>
+        <div className="pf-s"><div className="pf-lab">Supervisor check</div></div>
+      </div>
+      <div className="pf-foot">
+        <span>{machine.name} · {dateLabel}</span>
+        <span>{machine.department}</span>
+      </div>
+    </div>
+  )
+}
+
+// One sheet per visible machine that has work on the selected day. Lives in
+// `.print-root`, which is screen-hidden and print-shown (see printStyles).
+function PrintSheets({ machines, jobsByMachine, shift, dateLabel, dayName, weekNum }) {
+  const sheets = machines
+    .map((m) => ({ m, jobs: jobsByMachine.get(m.id) || [] }))
+    .filter((x) => x.jobs.length > 0)
+  return (
+    <div className="print-root" aria-hidden="true">
+      {sheets.length === 0 ? (
+        <div className="pf-empty">No scheduled work to print for {dayName}, {dateLabel}.</div>
+      ) : (
+        sheets.map(({ m, jobs }) => (
+          <PrintSheet
+            key={m.id}
+            machine={m}
+            jobs={jobs}
+            shift={shift}
+            dateLabel={dateLabel}
+            dayName={dayName}
+            weekNum={weekNum}
+          />
+        ))
+      )}
+    </div>
+  )
+}
+
+// ============================================================
 // Main screen
 // ============================================================
 export default function ScheduleScreen() {
@@ -1021,6 +1347,32 @@ export default function ScheduleScreen() {
     return m
   }, [jobsByMachine])
 
+  // Print selection — which machines get a run sheet. We track the EXCLUDED
+  // ids (empty set = print everything with work), so newly-busy machines on a
+  // different day default to included without any per-day bookkeeping.
+  const [printExcludedIds, setPrintExcludedIds] = useState(() => new Set())
+  // Candidate machines for printing: visible + has work today.
+  const printableMachines = useMemo(
+    () => visibleMachines.filter((m) => (jobsByMachine.get(m.id)?.length || 0) > 0),
+    [visibleMachines, jobsByMachine],
+  )
+  // Final list handed to the print layout.
+  const printMachines = useMemo(
+    () => printableMachines.filter((m) => !printExcludedIds.has(m.id)),
+    [printableMachines, printExcludedIds],
+  )
+  const togglePrintMachine = (id) => setPrintExcludedIds((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
+  const selectAllPrint = () => setPrintExcludedIds(new Set())
+  const selectNonePrint = () => setPrintExcludedIds(new Set(printableMachines.map((m) => m.id)))
+  const handlePrint = () => {
+    if (printMachines.length === 0) return
+    window.print()
+  }
+
   const expandAll = () => setOpenMachines(new Set(visibleMachines.map((m) => m.id)))
   const collapseAll = () => setOpenMachines(new Set())
 
@@ -1157,9 +1509,12 @@ export default function ScheduleScreen() {
   const shiftEndMin = timeToMin(dayShift.end)
   const isToday = selectedDate === todayStr
 
+  const dayName = DAY_NAMES[day - 1] || ''
+
   return (
     <>
       <style>{styles}</style>
+      <style>{printStyles}</style>
       <div className="app">
         <Sidebar />
         <main className="main">
@@ -1170,6 +1525,15 @@ export default function ScheduleScreen() {
             </div>
             <div className="topbar-actions">
               <TopbarActions />
+              <PrintPicker
+                machines={printableMachines}
+                excludedIds={printExcludedIds}
+                onToggle={togglePrintMachine}
+                onAll={selectAllPrint}
+                onNone={selectNonePrint}
+                jobCountById={jobCountByMachine}
+                onPrint={handlePrint}
+              />
               {canModify && (
                 <button className="ibtn primary" onClick={handleGenerate} disabled={generating}>
                   <Zap size={13} className="ic" /> {generating ? 'Generating…' : 'Regenerate'}
@@ -1288,6 +1652,15 @@ export default function ScheduleScreen() {
             )
           )}
         </main>
+
+        <PrintSheets
+          machines={printMachines}
+          jobsByMachine={jobsByMachine}
+          shift={dayShift}
+          dateLabel={selectedDate}
+          dayName={dayName}
+          weekNum={week}
+        />
       </div>
     </>
   )

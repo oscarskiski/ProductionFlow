@@ -286,7 +286,7 @@ export default function Sidebar() {
         <div className="brand">
           <div className="mark"><Logo /></div>
           <div className="name">
-            <b><em>elmo's</em> Production</b>
+            <b>Production<em>Flow</em></b>
             <span>Steelworks · Plant 2</span>
           </div>
         </div>

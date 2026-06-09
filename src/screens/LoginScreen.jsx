@@ -41,7 +41,7 @@ function LogoMark({ size = 64 }) {
   // Soft white tile with navy peak/valley silhouette + warm amber sun dot.
   const r = 18 * (size/64);
   return (
-    <svg width={size} height={size} viewBox="0 0 64 64" aria-label="elmo's Production logo">
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-label="ProductionFlow logo">
       <defs>
         <linearGradient id="lg-tile" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#ffffff"/>
@@ -307,8 +307,8 @@ export default function LoginScreen() {
               marginBottom: '14px'
             }}>
               <img
-                src="/logo.png"
-                alt="CORE Production logo"
+                src={`${import.meta.env.BASE_URL}logo.png`}
+                alt="ProductionFlow logo"
                 style={{ width: '54px', height: '54px', objectFit: 'contain' }}
               />
             </div>
@@ -329,7 +329,7 @@ export default function LoginScreen() {
                 marginTop: '4px',
                 lineHeight: '1.35'
               }}>
-                Brought to you by - CORE Production
+                Brought to you by - ProductionFlow
               </div>
             </div>
           </div>
