@@ -208,7 +208,29 @@ html, body {
 .toast button { background: transparent; border: 0; color: white; cursor: pointer; padding: 0; display: inline-flex; }
 
 .app { display: grid; grid-template-columns: 256px 1fr; min-height: 100vh; }
-@media (max-width: 1100px) { .stats { grid-template-columns: repeat(2, 1fr); } .app { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+/* ── Phones: the desktop layout uses deep left indents (machine rows are
+   inset 100px, part rows 52px) that crush the name column on a narrow
+   screen, forcing machine names to wrap over several lines. Pull those
+   indents back and compact the qty stepper so each name sits on one line
+   and far more fits per screen. ───────────────────────────────────────── */
+@media (max-width: 860px) {
+  .stats { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .ord-head { padding: 12px 12px; gap: 8px; }
+  .step { padding: 10px 10px 10px 14px; gap: 8px; }
+  .mach-row { padding: 8px 10px 8px 16px; gap: 8px; }
+  .mach-row .name { font-size: 12px; }
+  .mach-row .pill { min-width: 48px; padding: 4px 7px; }
+
+  .qty-stepper { gap: 1px; padding: 2px; }
+  .qty-stepper button { width: 26px; height: 26px; font-size: 12px; box-shadow: none; }
+  .qty-stepper button.big { width: 26px; height: 26px; font-size: 9px; padding: 0 2px; }
+  .qty-stepper .val-wrap { min-width: 18px; padding: 0; }
+  .qty-stepper .val-wrap input { width: 20px; font-size: 13px; }
+  .qty-stepper-wrap { gap: 5px; }
+  .qty-stepper-wrap .of { font-size: 10px; }
+}
 `
 
 const DEPT_TABS = [
