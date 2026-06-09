@@ -268,8 +268,15 @@ const sidebarStyles = `
   .topbar { flex-wrap: wrap; }
   .topbar h1 { font-size: 20px !important; }
   /* Wide horizontal strips scroll instead of pushing the page sideways. */
-  .day-strip { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .day-strip::-webkit-scrollbar { display: none; }
+  .day-strip, .dept-tabs, .week-tabs {
+    max-width: 100%; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .day-strip::-webkit-scrollbar,
+  .dept-tabs::-webkit-scrollbar,
+  .week-tabs::-webkit-scrollbar { display: none; }
+  /* Keep tabs from squashing — let them keep their size and scroll instead. */
+  .dept-tabs .dept-tab, .week-tabs .week-tab { flex-shrink: 0; white-space: nowrap; }
 }
 `
 
