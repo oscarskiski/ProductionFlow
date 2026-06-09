@@ -285,6 +285,35 @@ html, body { margin:0; padding:0; min-height: 100vh; font-family: 'Inter', -appl
 .break-row .when { font-size: 12px; font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .break-row .label { font-size: 11px; color: var(--ink-3); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
 .break-row .duration { font-size: 11px; color: var(--ink-3); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ── Phones & small tablets ──────────────────────────────────
+   Reflow the dense desktop grid into stacked lines so nothing runs off
+   the right edge. The per-machine progress bar and the big number stack
+   are desktop-only luxuries; the substats line already carries the key
+   counts, so we hide them here. */
+@media (max-width: 860px) {
+  .day-summary { grid-template-columns: 1fr; gap: 10px; padding: 14px 16px; }
+  .day-summary .endlabel { display: inline-block; }
+
+  .mc-head { grid-template-columns: 18px 1fr auto; gap: 12px; padding: 14px 14px 14px 18px; }
+  .mc-head .num-stack { display: none; }
+  .mc-head .mini-progress { display: none; }
+
+  .row { display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 7px; padding: 12px 14px; }
+  .row .drag { display: none; }
+  .row .seq { order: 1; }
+  .row .when { order: 2; }
+  .row .ord-pri { order: 3; }
+  .row .parts { order: 4; margin-left: auto; flex-direction: row; align-items: baseline; gap: 6px; min-width: 0; }
+  .row .parts .count { font-size: 22px; }
+  .row .parts .rate-label { margin-top: 0; }
+  .row .info { order: 5; flex: 1 1 100%; }
+  .row .action, .row .action-pair { order: 6; flex: 1 1 100%; }
+  .row .action-pair { display: flex; }
+  .row .action-pair .action { flex: 1; }
+
+  .break-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+}
 `
 
 // ============================================================

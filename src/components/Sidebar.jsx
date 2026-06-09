@@ -221,9 +221,55 @@ const sidebarStyles = `
 
 .side .ic { display: inline-block; vertical-align: middle; }
 
-@media (max-width: 1100px) {
+/* ── Responsive: phones & small tablets ─────────────────────────
+   Desktop (≥861px) keeps the left sidebar. Below that, the sidebar is
+   hidden and replaced by a fixed, horizontally-scrollable bottom tab bar
+   (.mobile-nav). Page content gets extra bottom padding to clear it. */
+.mobile-nav { display: none; }
+
+@media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
-  .side { position: relative; height: auto; }
+  .side { display: none; }
+
+  .mobile-nav {
+    display: flex;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 200;
+    background: var(--surface);
+    border-top: 1px solid var(--hairline-2);
+    box-shadow: 0 -3px 14px rgba(26,29,36,0.08);
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+    gap: 2px; overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .mobile-nav::-webkit-scrollbar { display: none; }
+  .mobile-nav .mnav-item {
+    flex: 0 0 auto; min-width: 58px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    padding: 6px 8px 5px; border-radius: 12px;
+    text-decoration: none; border: 0; background: transparent;
+    color: var(--ink-3); font: inherit; font-size: 10px; font-weight: 600;
+    cursor: pointer; position: relative; white-space: nowrap;
+  }
+  .mobile-nav .mnav-item .ic { width: 22px; height: 22px; color: var(--ink-3); }
+  .mobile-nav .mnav-item[aria-current="page"] { color: var(--navy); background: var(--navy-soft); }
+  .mobile-nav .mnav-item[aria-current="page"] .ic { color: var(--navy); }
+  .mobile-nav .mnav-item.danger:active { color: var(--red); }
+  .mobile-nav .mnav-badge {
+    position: absolute; top: 2px; right: 9px;
+    min-width: 15px; height: 15px; padding: 0 3px; border-radius: 999px;
+    background: var(--amber); color: #fff; font-size: 9px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    border: 1.5px solid var(--surface);
+  }
+  .mobile-nav .mnav-badge.critical { background: var(--red); }
+
+  /* Page content: room above the fixed bar + tighter gutters on phones. */
+  .main { padding-left: 13px !important; padding-right: 13px !important; padding-bottom: 92px !important; }
+  .topbar { flex-wrap: wrap; }
+  .topbar h1 { font-size: 20px !important; }
+  /* Wide horizontal strips scroll instead of pushing the page sideways. */
+  .day-strip { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .day-strip::-webkit-scrollbar { display: none; }
 }
 `
 
@@ -279,6 +325,11 @@ export default function Sidebar() {
     signOut()
     navigate('/login')
   }
+  // Flattened, role-filtered destinations for the mobile bottom bar — same
+  // source of truth as the desktop sidebar sections.
+  const mobileNavItems = sections
+    .flatMap((s) => s.items)
+    .filter((item) => !item.roles || item.roles.includes(user?.role))
   return (
     <>
       <style>{sidebarStyles}</style>
@@ -344,6 +395,31 @@ export default function Sidebar() {
           </div>
         </div>
       </aside>
+
+      <nav className="mobile-nav" aria-label="Main navigation">
+        {mobileNavItems.map((item) => {
+          const liveBadge = item.badgeKey ? liveBadges[item.badgeKey] : null
+          const badge = liveBadge != null && liveBadge > 0 ? liveBadge : item.badge
+          const isCritical = item.badgeKey === 'needsReview' && liveBadge > 0
+          return (
+            <NavLink key={item.id} to={item.to} end className="mnav-item">
+              <I n={item.icon} s={22} />
+              <span>{item.label}</span>
+              {badge ? <span className={`mnav-badge ${isCritical ? 'critical' : ''}`}>{badge}</span> : null}
+            </NavLink>
+          )
+        })}
+        {user?.role !== 'Worker' && (
+          <NavLink to="/import" end className="mnav-item">
+            <I n="up" s={22} />
+            <span>Import</span>
+          </NavLink>
+        )}
+        <button className="mnav-item danger" onClick={handleLogout}>
+          <I n="logout" s={22} />
+          <span>Logout</span>
+        </button>
+      </nav>
     </>
   )
 }
