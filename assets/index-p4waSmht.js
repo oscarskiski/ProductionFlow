@@ -191,11 +191,57 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
 .side .ic { display: inline-block; vertical-align: middle; }
 
-@media (max-width: 1100px) {
+/* ── Responsive: phones & small tablets ─────────────────────────
+   Desktop (≥861px) keeps the left sidebar. Below that, the sidebar is
+   hidden and replaced by a fixed, horizontally-scrollable bottom tab bar
+   (.mobile-nav). Page content gets extra bottom padding to clear it. */
+.mobile-nav { display: none; }
+
+@media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
-  .side { position: relative; height: auto; }
+  .side { display: none; }
+
+  .mobile-nav {
+    display: flex;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 200;
+    background: var(--surface);
+    border-top: 1px solid var(--hairline-2);
+    box-shadow: 0 -3px 14px rgba(26,29,36,0.08);
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+    gap: 2px; overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .mobile-nav::-webkit-scrollbar { display: none; }
+  .mobile-nav .mnav-item {
+    flex: 0 0 auto; min-width: 58px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    padding: 6px 8px 5px; border-radius: 12px;
+    text-decoration: none; border: 0; background: transparent;
+    color: var(--ink-3); font: inherit; font-size: 10px; font-weight: 600;
+    cursor: pointer; position: relative; white-space: nowrap;
+  }
+  .mobile-nav .mnav-item .ic { width: 22px; height: 22px; color: var(--ink-3); }
+  .mobile-nav .mnav-item[aria-current="page"] { color: var(--navy); background: var(--navy-soft); }
+  .mobile-nav .mnav-item[aria-current="page"] .ic { color: var(--navy); }
+  .mobile-nav .mnav-item.danger:active { color: var(--red); }
+  .mobile-nav .mnav-badge {
+    position: absolute; top: 2px; right: 9px;
+    min-width: 15px; height: 15px; padding: 0 3px; border-radius: 999px;
+    background: var(--amber); color: #fff; font-size: 9px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    border: 1.5px solid var(--surface);
+  }
+  .mobile-nav .mnav-badge.critical { background: var(--red); }
+
+  /* Page content: room above the fixed bar + tighter gutters on phones. */
+  .main { padding-left: 13px !important; padding-right: 13px !important; padding-bottom: 92px !important; }
+  .topbar { flex-wrap: wrap; }
+  .topbar h1 { font-size: 20px !important; }
+  /* Wide horizontal strips scroll instead of pushing the page sideways. */
+  .day-strip { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .day-strip::-webkit-scrollbar { display: none; }
 }
-`,Ou=[{group:`Production`,items:[{id:`dash`,to:`/dashboard`,label:`Dashboard`,icon:`grid`},{id:`pri`,to:`/priority`,label:`Priority`,icon:`list`,badge:2},{id:`reconcile`,to:`/reconcile`,label:`Reconcile`,icon:`merge`,roles:[`Boss`,`Manager`],badgeKey:`needsReview`},{id:`week`,to:`/week`,label:`Week Plan`,icon:`cal`},{id:`sched`,to:`/schedule`,label:`Schedule`,icon:`wave`}]},{group:`Tracking`,items:[{id:`track`,to:`/tracking`,label:`Tracking`,icon:`check-sq`},{id:`disp`,to:`/dispatch`,label:`Dispatch`,icon:`truck`}]},{group:`Config`,items:[{id:`prod`,to:`/products`,label:`Products`,icon:`pkg`,roles:[`Boss`,`Manager`]},{id:`mach`,to:`/machines`,label:`Machines`,icon:`machine`,roles:[`Boss`,`Manager`]},{id:`cust`,to:`/customers`,label:`Customers`,icon:`users`,roles:[`Boss`,`Manager`]},{id:`opts`,to:`/options`,label:`Options`,icon:`options`,roles:[`Boss`]}]}],ku=[`Sunday`,`Monday`,`Tuesday`,`Wednesday`,`Thursday`,`Friday`,`Saturday`],Au=[`Jan`,`Feb`,`Mar`,`Apr`,`May`,`Jun`,`Jul`,`Aug`,`Sep`,`Oct`,`Nov`,`Dec`];function ju(e){return`${String(e.getHours()).padStart(2,`0`)}:${String(e.getMinutes()).padStart(2,`0`)}`}function Mu(e){return`${e.getDate()} ${Au[e.getMonth()]} ${e.getFullYear()} · ${ku[e.getDay()]}`}function Nu(){let e=Qe(),t=Ml(),{isLoading:n,lastSynced:r,orders:i}=Cu(),a={needsReview:(i||[]).filter(e=>e.needs_review).length};return(0,Z.jsxs)(Z.Fragment,{children:[(0,Z.jsx)(`style`,{children:Du}),(0,Z.jsxs)(`aside`,{className:`side`,children:[(0,Z.jsxs)(`div`,{className:`brand`,children:[(0,Z.jsx)(`div`,{className:`mark`,children:(0,Z.jsx)(Eu,{})}),(0,Z.jsxs)(`div`,{className:`name`,children:[(0,Z.jsxs)(`b`,{children:[`Production`,(0,Z.jsx)(`em`,{children:`Flow`})]}),(0,Z.jsx)(`span`,{children:`Steelworks · Plant 2`})]})]}),(0,Z.jsxs)(`div`,{className:`ctx-card`,children:[(0,Z.jsx)(`div`,{className:`role-pill`,children:t?.role||`Guest`}),(0,Z.jsxs)(`div`,{className:`row`,children:[(0,Z.jsx)(Tu,{n:`factory`,s:14}),` `,(0,Z.jsx)(`span`,{children:Pl(t?.activeDepartment)})]}),(0,Z.jsxs)(`div`,{className:`row`,children:[(0,Z.jsx)(Tu,{n:`users`,s:14}),` `,(0,Z.jsxs)(`span`,{children:[`signed in as `,(0,Z.jsx)(`b`,{children:t?.name||`—`})]})]})]}),Ou.map(e=>{let n=e.items.filter(e=>!e.roles||e.roles.includes(t?.role));return n.length===0?null:(0,Z.jsxs)(`div`,{className:`nav-group`,children:[(0,Z.jsx)(`div`,{className:`nav-title`,children:e.group}),n.map(e=>{let t=e.badgeKey?a[e.badgeKey]:null,n=t!=null&&t>0?t:e.badge,r=e.badgeKey===`needsReview`&&t>0;return(0,Z.jsxs)(vn,{to:e.to,end:!0,className:`nav-item`,children:[(0,Z.jsx)(Tu,{n:e.icon,s:18}),(0,Z.jsx)(`span`,{children:e.label}),n&&(0,Z.jsx)(`span`,{className:`badge ${r?`critical`:``}`,children:n})]},e.id)})]},e.group)}),(0,Z.jsxs)(`div`,{className:`side-foot`,children:[t?.role!==`Worker`&&(0,Z.jsxs)(`div`,{className:`util-row`,children:[(0,Z.jsxs)(`button`,{className:`util-btn`,children:[(0,Z.jsx)(Tu,{n:`down`,s:13}),` Export`]}),(0,Z.jsxs)(`button`,{className:`util-btn`,children:[(0,Z.jsx)(Tu,{n:`shield`,s:13}),` Backups`]}),(0,Z.jsxs)(vn,{to:`/import`,end:!0,className:`util-btn`,children:[(0,Z.jsx)(Tu,{n:`up`,s:13}),` Import`]})]}),(0,Z.jsxs)(`button`,{className:`signout`,onClick:()=>{jl(),e(`/login`)},children:[(0,Z.jsx)(Tu,{n:`logout`,s:14}),` Logout`]}),(0,Z.jsxs)(`div`,{className:`meta-foot`,children:[(0,Z.jsx)(`div`,{className:`sync ${n?`syncing`:``}`,children:n?(0,Z.jsxs)(Z.Fragment,{children:[(0,Z.jsx)(Ar,{size:11,strokeWidth:2.4,className:`spin`}),` Syncing…`]}):(0,Z.jsxs)(Z.Fragment,{children:[(0,Z.jsx)(`span`,{className:`dot`}),` Synced `,r?ju(r):`—`]})}),(0,Z.jsx)(`div`,{children:Mu(new Date)})]})]})]})]})}async function Pu(e=30){let{data:t,error:n}=await X.from(`messages`).select(`id, body, author_id, author_name, author_role, author_dept, created_at`).order(`created_at`,{ascending:!1}).limit(e);if(n)throw Error(`List messages: ${n.message}`);return t||[]}async function Fu({body:e,author:t}){let n=(e||``).trim();if(!n)return null;let r={body:n,author_id:t?.id??null,author_name:t?.name||`Unknown`,author_role:t?.role||`Worker`,author_dept:t?.activeDepartment||null},{data:i,error:a}=await X.from(`messages`).insert(r).select().single();if(a)throw Error(`Post message: ${a.message}`);return i}async function Iu(e){let{error:t}=await X.from(`messages`).delete().eq(`id`,e);if(t)throw Error(`Delete message: ${t.message}`)}function Lu({onInsert:e,onDelete:t}){let n=X.channel(`messages-feed`).on(`postgres_changes`,{event:`INSERT`,schema:`public`,table:`messages`},t=>{e?.(t.new)}).on(`postgres_changes`,{event:`DELETE`,schema:`public`,table:`messages`},e=>{t?.(e.old)}).subscribe();return()=>{try{X.removeChannel(n)}catch{}}}var Ru=`
+`,Ou=[{group:`Production`,items:[{id:`dash`,to:`/dashboard`,label:`Dashboard`,icon:`grid`},{id:`pri`,to:`/priority`,label:`Priority`,icon:`list`,badge:2},{id:`reconcile`,to:`/reconcile`,label:`Reconcile`,icon:`merge`,roles:[`Boss`,`Manager`],badgeKey:`needsReview`},{id:`week`,to:`/week`,label:`Week Plan`,icon:`cal`},{id:`sched`,to:`/schedule`,label:`Schedule`,icon:`wave`}]},{group:`Tracking`,items:[{id:`track`,to:`/tracking`,label:`Tracking`,icon:`check-sq`},{id:`disp`,to:`/dispatch`,label:`Dispatch`,icon:`truck`}]},{group:`Config`,items:[{id:`prod`,to:`/products`,label:`Products`,icon:`pkg`,roles:[`Boss`,`Manager`]},{id:`mach`,to:`/machines`,label:`Machines`,icon:`machine`,roles:[`Boss`,`Manager`]},{id:`cust`,to:`/customers`,label:`Customers`,icon:`users`,roles:[`Boss`,`Manager`]},{id:`opts`,to:`/options`,label:`Options`,icon:`options`,roles:[`Boss`]}]}],ku=[`Sunday`,`Monday`,`Tuesday`,`Wednesday`,`Thursday`,`Friday`,`Saturday`],Au=[`Jan`,`Feb`,`Mar`,`Apr`,`May`,`Jun`,`Jul`,`Aug`,`Sep`,`Oct`,`Nov`,`Dec`];function ju(e){return`${String(e.getHours()).padStart(2,`0`)}:${String(e.getMinutes()).padStart(2,`0`)}`}function Mu(e){return`${e.getDate()} ${Au[e.getMonth()]} ${e.getFullYear()} · ${ku[e.getDay()]}`}function Nu(){let e=Qe(),t=Ml(),{isLoading:n,lastSynced:r,orders:i}=Cu(),a={needsReview:(i||[]).filter(e=>e.needs_review).length},o=()=>{jl(),e(`/login`)},s=Ou.flatMap(e=>e.items).filter(e=>!e.roles||e.roles.includes(t?.role));return(0,Z.jsxs)(Z.Fragment,{children:[(0,Z.jsx)(`style`,{children:Du}),(0,Z.jsxs)(`aside`,{className:`side`,children:[(0,Z.jsxs)(`div`,{className:`brand`,children:[(0,Z.jsx)(`div`,{className:`mark`,children:(0,Z.jsx)(Eu,{})}),(0,Z.jsxs)(`div`,{className:`name`,children:[(0,Z.jsxs)(`b`,{children:[`Production`,(0,Z.jsx)(`em`,{children:`Flow`})]}),(0,Z.jsx)(`span`,{children:`Steelworks · Plant 2`})]})]}),(0,Z.jsxs)(`div`,{className:`ctx-card`,children:[(0,Z.jsx)(`div`,{className:`role-pill`,children:t?.role||`Guest`}),(0,Z.jsxs)(`div`,{className:`row`,children:[(0,Z.jsx)(Tu,{n:`factory`,s:14}),` `,(0,Z.jsx)(`span`,{children:Pl(t?.activeDepartment)})]}),(0,Z.jsxs)(`div`,{className:`row`,children:[(0,Z.jsx)(Tu,{n:`users`,s:14}),` `,(0,Z.jsxs)(`span`,{children:[`signed in as `,(0,Z.jsx)(`b`,{children:t?.name||`—`})]})]})]}),Ou.map(e=>{let n=e.items.filter(e=>!e.roles||e.roles.includes(t?.role));return n.length===0?null:(0,Z.jsxs)(`div`,{className:`nav-group`,children:[(0,Z.jsx)(`div`,{className:`nav-title`,children:e.group}),n.map(e=>{let t=e.badgeKey?a[e.badgeKey]:null,n=t!=null&&t>0?t:e.badge,r=e.badgeKey===`needsReview`&&t>0;return(0,Z.jsxs)(vn,{to:e.to,end:!0,className:`nav-item`,children:[(0,Z.jsx)(Tu,{n:e.icon,s:18}),(0,Z.jsx)(`span`,{children:e.label}),n&&(0,Z.jsx)(`span`,{className:`badge ${r?`critical`:``}`,children:n})]},e.id)})]},e.group)}),(0,Z.jsxs)(`div`,{className:`side-foot`,children:[t?.role!==`Worker`&&(0,Z.jsxs)(`div`,{className:`util-row`,children:[(0,Z.jsxs)(`button`,{className:`util-btn`,children:[(0,Z.jsx)(Tu,{n:`down`,s:13}),` Export`]}),(0,Z.jsxs)(`button`,{className:`util-btn`,children:[(0,Z.jsx)(Tu,{n:`shield`,s:13}),` Backups`]}),(0,Z.jsxs)(vn,{to:`/import`,end:!0,className:`util-btn`,children:[(0,Z.jsx)(Tu,{n:`up`,s:13}),` Import`]})]}),(0,Z.jsxs)(`button`,{className:`signout`,onClick:o,children:[(0,Z.jsx)(Tu,{n:`logout`,s:14}),` Logout`]}),(0,Z.jsxs)(`div`,{className:`meta-foot`,children:[(0,Z.jsx)(`div`,{className:`sync ${n?`syncing`:``}`,children:n?(0,Z.jsxs)(Z.Fragment,{children:[(0,Z.jsx)(Ar,{size:11,strokeWidth:2.4,className:`spin`}),` Syncing…`]}):(0,Z.jsxs)(Z.Fragment,{children:[(0,Z.jsx)(`span`,{className:`dot`}),` Synced `,r?ju(r):`—`]})}),(0,Z.jsx)(`div`,{children:Mu(new Date)})]})]})]}),(0,Z.jsxs)(`nav`,{className:`mobile-nav`,"aria-label":`Main navigation`,children:[s.map(e=>{let t=e.badgeKey?a[e.badgeKey]:null,n=t!=null&&t>0?t:e.badge,r=e.badgeKey===`needsReview`&&t>0;return(0,Z.jsxs)(vn,{to:e.to,end:!0,className:`mnav-item`,children:[(0,Z.jsx)(Tu,{n:e.icon,s:22}),(0,Z.jsx)(`span`,{children:e.label}),n?(0,Z.jsx)(`span`,{className:`mnav-badge ${r?`critical`:``}`,children:n}):null]},e.id)}),t?.role!==`Worker`&&(0,Z.jsxs)(vn,{to:`/import`,end:!0,className:`mnav-item`,children:[(0,Z.jsx)(Tu,{n:`up`,s:22}),(0,Z.jsx)(`span`,{children:`Import`})]}),(0,Z.jsxs)(`button`,{className:`mnav-item danger`,onClick:o,children:[(0,Z.jsx)(Tu,{n:`logout`,s:22}),(0,Z.jsx)(`span`,{children:`Logout`})]})]})]})}async function Pu(e=30){let{data:t,error:n}=await X.from(`messages`).select(`id, body, author_id, author_name, author_role, author_dept, created_at`).order(`created_at`,{ascending:!1}).limit(e);if(n)throw Error(`List messages: ${n.message}`);return t||[]}async function Fu({body:e,author:t}){let n=(e||``).trim();if(!n)return null;let r={body:n,author_id:t?.id??null,author_name:t?.name||`Unknown`,author_role:t?.role||`Worker`,author_dept:t?.activeDepartment||null},{data:i,error:a}=await X.from(`messages`).insert(r).select().single();if(a)throw Error(`Post message: ${a.message}`);return i}async function Iu(e){let{error:t}=await X.from(`messages`).delete().eq(`id`,e);if(t)throw Error(`Delete message: ${t.message}`)}function Lu({onInsert:e,onDelete:t}){let n=X.channel(`messages-feed`).on(`postgres_changes`,{event:`INSERT`,schema:`public`,table:`messages`},t=>{e?.(t.new)}).on(`postgres_changes`,{event:`DELETE`,schema:`public`,table:`messages`},e=>{t?.(e.old)}).subscribe();return()=>{try{X.removeChannel(n)}catch{}}}var Ru=`
 .cfd-overlay {
   position: fixed; inset: 0; z-index: 300;
   background: rgba(0,0,0,0.55); backdrop-filter: blur(4px);
@@ -2275,6 +2321,35 @@ html, body { margin:0; padding:0; min-height: 100vh; font-family: 'Inter', -appl
 .break-row .when { font-size: 12px; font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .break-row .label { font-size: 11px; color: var(--ink-3); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
 .break-row .duration { font-size: 11px; color: var(--ink-3); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ── Phones & small tablets ──────────────────────────────────
+   Reflow the dense desktop grid into stacked lines so nothing runs off
+   the right edge. The per-machine progress bar and the big number stack
+   are desktop-only luxuries; the substats line already carries the key
+   counts, so we hide them here. */
+@media (max-width: 860px) {
+  .day-summary { grid-template-columns: 1fr; gap: 10px; padding: 14px 16px; }
+  .day-summary .endlabel { display: inline-block; }
+
+  .mc-head { grid-template-columns: 18px 1fr auto; gap: 12px; padding: 14px 14px 14px 18px; }
+  .mc-head .num-stack { display: none; }
+  .mc-head .mini-progress { display: none; }
+
+  .row { display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 7px; padding: 12px 14px; }
+  .row .drag { display: none; }
+  .row .seq { order: 1; }
+  .row .when { order: 2; }
+  .row .ord-pri { order: 3; }
+  .row .parts { order: 4; margin-left: auto; flex-direction: row; align-items: baseline; gap: 6px; min-width: 0; }
+  .row .parts .count { font-size: 22px; }
+  .row .parts .rate-label { margin-top: 0; }
+  .row .info { order: 5; flex: 1 1 100%; }
+  .row .action, .row .action-pair { order: 6; flex: 1 1 100%; }
+  .row .action-pair { display: flex; }
+  .row .action-pair .action { flex: 1; }
+
+  .break-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+}
 `,ef=`
 .print-root { display: none; }
 @media print {
