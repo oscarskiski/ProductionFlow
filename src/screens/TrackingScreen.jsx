@@ -67,9 +67,14 @@ html, body {
 .dept-tab .ic { width: 13px; height: 13px; color: var(--ink-3); }
 .dept-tab[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 2px 4px rgba(26,29,36,0.05); font-weight: 600; }
 .dept-tab[aria-pressed="true"] .ic { color: var(--navy); }
-.search-box { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--hairline-2); border-radius: 10px; padding: 7px 11px; min-width: 220px; }
-.search-box input { border: 0; background: transparent; outline: 0; font: inherit; font-size: 12px; color: var(--ink); width: 100%; }
-.search-box .ic { color: var(--ink-3); }
+.search-box { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--hairline-2); border-radius: 10px; padding: 7px 11px; flex: 1 1 260px; min-width: 220px; max-width: 440px; transition: border-color 140ms ease, box-shadow 140ms ease; }
+.search-box:focus-within { border-color: var(--navy); box-shadow: 0 0 0 3px var(--navy-soft); }
+.search-box.active { border-color: var(--navy); }
+.search-box input { border: 0; background: transparent; outline: 0; font: inherit; font-size: 13px; color: var(--ink); width: 100%; }
+.search-box .ic { color: var(--ink-3); flex-shrink: 0; }
+.search-box .search-count { font-size: 11px; font-weight: 600; color: var(--ink-3); white-space: nowrap; flex-shrink: 0; }
+.search-box .search-clear { appearance: none; border: 0; background: var(--surface-2); color: var(--ink-3); border-radius: 999px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; padding: 0; }
+.search-box .search-clear:hover { background: var(--hairline-2); color: var(--ink); }
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 .stat { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 12px 14px; box-shadow: var(--shadow-card); display: flex; flex-direction: column; gap: 4px; }
 .stat .l { font-size: 10px; font-weight: 700; color: var(--ink-3); letter-spacing: 0.08em; text-transform: uppercase; }
@@ -217,6 +222,10 @@ html, body {
    and far more fits per screen. ───────────────────────────────────────── */
 @media (max-width: 860px) {
   .stats { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  /* Search gets its own full-width row and a 16px input so iOS doesn't
+     zoom in when it's focused. */
+  .search-box { flex: 1 1 100%; max-width: none; order: -1; padding: 9px 12px; }
+  .search-box input { font-size: 16px; }
   .ord-head { padding: 12px 12px; gap: 8px; }
   .step { padding: 10px 10px 10px 14px; gap: 8px; }
   .mach-row { padding: 8px 10px 8px 16px; gap: 8px; }
@@ -582,12 +591,18 @@ export default function TrackingScreen() {
       })
       .filter((o) => {
         if (!q) return true
-        return (
-          String(o.kwitasie_nr || '').toLowerCase().includes(q) ||
-          String(o.product_name || '').toLowerCase().includes(q) ||
-          String(o.customer_name || '').toLowerCase().includes(q) ||
-          String(o.product_code || '').toLowerCase().includes(q)
-        )
+        // Tracking-only search. Match everything an operator might type to find
+        // an order/product fast: the order number they SEE on the card (ord_nr),
+        // the import id (kwitasie_nr), product code + name, customer, AND the
+        // individual part names inside the product — so searching a part finds
+        // its order.
+        const product = productByCode.get(o.product_code)
+        const parts = product ? (partsByProduct.get(product.id) || []) : []
+        const hay = [
+          o.ord_nr, o.kwitasie_nr, o.product_code, o.product_name, o.customer_name,
+          ...parts.map((p) => p.name),
+        ]
+        return hay.some((v) => String(v ?? '').toLowerCase().includes(q))
       })
       .map((o) => {
         const product = productByCode.get(o.product_code)
@@ -785,13 +800,27 @@ export default function TrackingScreen() {
                 </button>
               ))}
             </div>
-            <div className="search-box">
-              <Search size={13} strokeWidth={1.8} className="ic" />
+            <div className={`search-box ${query ? 'active' : ''}`}>
+              <Search size={14} strokeWidth={1.8} className="ic" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search order #, product, customer…"
+                placeholder="Search product, part, order #, customer…"
+                aria-label="Search tracking"
               />
+              {query && (
+                <>
+                  <span className="search-count">{visible.length} match{visible.length === 1 ? '' : 'es'}</span>
+                  <button
+                    type="button"
+                    className="search-clear"
+                    onClick={() => setQuery('')}
+                    aria-label="Clear search"
+                  >
+                    <X size={14} strokeWidth={2.2} />
+                  </button>
+                </>
+              )}
             </div>
             <div style={{ flex: 1 }} />
             <button className="ibtn" onClick={expandAll}><Expand size={12} strokeWidth={1.8} className="ic" /> Expand All</button>
@@ -845,7 +874,7 @@ export default function TrackingScreen() {
                     key={order.id}
                     order={order}
                     tracking={tracking}
-                    defaultOpen={expandSignal.at ? expandSignal.all : i < 2}
+                    defaultOpen={query.trim() ? true : (expandSignal.at ? expandSignal.all : i < 2)}
                     currentWeek={currentWeek}
                     leftoverSteps={leftoverSteps}
                     productionComplete={productionComplete}
