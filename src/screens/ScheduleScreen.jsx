@@ -329,15 +329,19 @@ html, body { margin:0; padding:0; min-height: 100vh; font-family: 'Inter', -appl
 const printStyles = `
 .print-root { display: none; }
 @media print {
-  body { background: #fff !important; }
-  /* Hide everything in the app except the run-sheets. */
+  html, body { background: #fff !important; height: auto !important; overflow: visible !important; }
+  /* The app shell is a CSS grid; content inside a grid/flex item does NOT
+     paginate across pages in most browsers, so every machine sheet collapsed
+     toward a single page ("only one prints"). Force plain block flow for the
+     print root and its ancestors so each sheet becomes its own page. */
+  .app { display: block !important; }
   .app > *:not(.print-root) { display: none !important; }
-  .print-root { display: block !important; }
+  .print-root { display: block !important; width: auto !important; }
   @page { size: A4 portrait; margin: 12mm; }
-  .pf-page { page-break-after: always; }
-  .pf-page:last-child { page-break-after: auto; }
+  .pf-page { break-after: page; page-break-after: always; break-inside: auto; }
+  .pf-page:last-child { break-after: auto; page-break-after: auto; }
   .pf-table { page-break-inside: auto; }
-  .pf-table tr { page-break-inside: avoid; }
+  .pf-table tr { break-inside: avoid; page-break-inside: avoid; }
 }
 .print-root {
   --pf-ink:#1c1c1a; --pf-muted:#76746e; --pf-faint:#a9a7a0;
