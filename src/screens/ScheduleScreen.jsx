@@ -1168,7 +1168,9 @@ export default function ScheduleScreen() {
   })
   const [dept, setDept] = useState('steel')
   const [openMachines, setOpenMachines] = useState(() => new Set())
-  const [onlyWithWork, setOnlyWithWork] = useState(false)
+  // Default to showing only machines that have work — click the toggle off to
+  // reveal every (idle) station.
+  const [onlyWithWork, setOnlyWithWork] = useState(true)
   const [hiddenMachineIds, setHiddenMachineIds] = useState(() => new Set())
   const [generating, setGenerating] = useState(false)
   const [genMsg, setGenMsg] = useState(null)
