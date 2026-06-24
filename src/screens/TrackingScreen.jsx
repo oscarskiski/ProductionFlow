@@ -657,6 +657,7 @@ export default function TrackingScreen() {
     if (pending?.timer) clearTimeout(pending.timer)
     pendingByStep.current[key] = {
       qty,
+      rows, // kept so a reschedule can force-flush this write first
       timer: setTimeout(async () => {
         try {
           const results = await setStepQtyDone({ rows, totalQtyDone: qty })
@@ -667,6 +668,24 @@ export default function TrackingScreen() {
           delete pendingByStep.current[key]
         }
       }, 450),
+    }
+  }
+
+  // Force every still-debounced stepper write to land NOW and wait for them.
+  // Called before a reschedule so the DB's qty_done reflects exactly what the
+  // user ticked — otherwise the reschedule could move work that's really done.
+  const flushPendingStepWrites = async () => {
+    const entries = Object.entries(pendingByStep.current)
+    for (const [key, p] of entries) {
+      if (p.timer) clearTimeout(p.timer)
+      try {
+        const results = await setStepQtyDone({ rows: p.rows, totalQtyDone: p.qty })
+        for (const r of results) applyScheduleRowUpdate(r.id, r)
+      } catch (e) {
+        setToastMsg(e.message || String(e))
+      } finally {
+        delete pendingByStep.current[key]
+      }
     }
   }
 
@@ -702,6 +721,9 @@ export default function TrackingScreen() {
     let skipped = []
     let unmappable = []
     try {
+      // Make sure any just-ticked ± changes are saved before we decide what's
+      // unfinished — the reschedule re-reads the DB, so this must land first.
+      await flushPendingStepWrites()
       const result = await rescheduleOrderLeftovers({
         order: rescheduleCtx.order,
         leftoverSteps: rescheduleCtx.leftoverSteps,

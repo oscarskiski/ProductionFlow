@@ -155,10 +155,44 @@ export async function rescheduleOrderLeftovers({
   if (!order?.id) throw new Error('Order required')
   if (!leftoverSteps || leftoverSteps.length === 0) return { deleted: [], updated: [], inserted: [], skipped: [] }
 
+  // ---------- 0. Re-read the order's CURRENT rows from the DB ----------
+  // The leftoverSteps handed in are derived from the in-memory cache, which a
+  // debounced tick or a mid-flight reload could leave stale. Rescheduling off
+  // stale data is exactly what re-creates already-finished work on the new
+  // day. So we re-pull the truth here and recompute each step's qty_done from
+  // it — fully-done steps are then dropped and only the real remainder moves.
+  const { data: freshRows, error: freshErr } = await supabase
+    .from('schedule')
+    .select('id, machine_step_id, qty, qty_done, status, completed_at, scheduled_date, start_time')
+    .eq('order_id', order.id)
+  if (freshErr) throw new Error(`Reading current rows: ${freshErr.message}`)
+  const freshByStep = new Map()
+  for (const r of (freshRows || [])) {
+    if (!r.machine_step_id) continue
+    if (!freshByStep.has(r.machine_step_id)) freshByStep.set(r.machine_step_id, [])
+    freshByStep.get(r.machine_step_id).push(r)
+  }
+  const activeLeftovers = leftoverSteps
+    .map((ls) => {
+      const stepId = ls.stepView.step.id
+      const rows = freshByStep.get(stepId) || ls.stepView.rows || []
+      const summedQty = rows.reduce((s, r) => s + (r.qty ?? 0), 0)
+      const summedDone = rows.reduce((s, r) => s + (r.qty_done ?? 0), 0)
+      const qty = summedQty || ls.stepView.qty
+      const qty_done = Math.min(summedDone, qty)
+      return { ...ls, stepView: { ...ls.stepView, rows, qty, qty_done } }
+    })
+    // Drop steps that are now fully done — nothing to close, nothing to move.
+    .filter((ls) => ls.stepView.qty_done < ls.stepView.qty)
+
+  if (activeLeftovers.length === 0) {
+    return { deleted: [], updated: [], inserted: [], skipped: [], unmappable: [] }
+  }
+
   // ---------- 1. Close out the old rows for every leftover step ----------
   const deletedIds = []
   const updatedRows = []
-  for (const ls of leftoverSteps) {
+  for (const ls of activeLeftovers) {
     for (const r of (ls.stepView.rows || [])) {
       const qty = r.qty || 0
       const done = r.qty_done || 0
@@ -191,7 +225,7 @@ export async function rescheduleOrderLeftovers({
   // or deleted from the Machines screen) can't be placed. Collect them as
   // unmappable so the UI can warn rather than silently dropping work.
   const unmappable = []
-  const stepsLeft = leftoverSteps
+  const stepsLeft = activeLeftovers
     .map((ls) => {
       const machine = machineByName.get(ls.stepView.step.machine_name)
       const partId = ls.stepView.step.part_id
