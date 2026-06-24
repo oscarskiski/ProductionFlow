@@ -520,6 +520,70 @@ export async function rescheduleStep({ stepView, machineId, orderId, holidaySet,
   return { deleted: deletedIds, updated: updatedRows, inserted }
 }
 
+// Remove PHANTOM schedule rows: queued (qty_done = 0, not completed) rows that
+// belong to a (order, machine_step) whose required quantity is ALREADY fully
+// done by other rows. These come from a Regenerate that re-schedules an order's
+// full quantity on top of work that's already finished — Tracking caps the
+// totals so it reads "done", but the Schedule keeps listing the leftover copies.
+//
+// Safe by construction: we only delete queued rows on steps where
+// SUM(qty_done) >= partTotal, i.e. the step needs no more work. Authoritative —
+// re-reads the schedule from the DB rather than trusting the cache. Returns the
+// deleted ids so the caller can patch its local cache.
+export async function cleanupDoneStepPhantoms({
+  orders, productByCode, partsByProduct, stepsByPart, orderIds = null,
+}) {
+  // Fresh schedule rows (optionally scoped to specific orders, e.g. right
+  // after a Regenerate of one week).
+  let q = supabase.from('schedule').select('id, order_id, machine_step_id, qty, qty_done, status')
+  if (orderIds && orderIds.length > 0) q = q.in('order_id', orderIds)
+  const { data: schedule, error } = await q
+  if (error) throw new Error(`Reading schedule for cleanup: ${error.message}`)
+  if (!schedule || schedule.length === 0) return []
+
+  const orderById = new Map((orders || []).map((o) => [o.id, o]))
+  // machine_step_id → its part (for qty_per_unit → partTotal).
+  const stepToPart = new Map()
+  for (const parts of (partsByProduct?.values() || [])) {
+    for (const part of parts) {
+      for (const s of (stepsByPart.get(part.id) || [])) stepToPart.set(s.id, part)
+    }
+  }
+
+  const groups = new Map()
+  for (const r of schedule) {
+    if (!r.order_id || !r.machine_step_id) continue
+    const k = `${r.order_id}:${r.machine_step_id}`
+    if (!groups.has(k)) groups.set(k, [])
+    groups.get(k).push(r)
+  }
+
+  const toDelete = []
+  for (const [k, rows] of groups) {
+    const sep = k.indexOf(':')
+    const orderId = k.slice(0, sep)
+    const stepId = k.slice(sep + 1)
+    const order = orderById.get(orderId)
+    const part = stepToPart.get(stepId)
+    if (!order || !part) continue
+    const partTotal = (part.qty_per_unit ?? 1) * (order.qty || 0)
+    if (partTotal <= 0) continue
+    const done = rows.reduce((s, r) => s + (r.qty_done ?? 0), 0)
+    if (done < partTotal) continue // step still needs work — keep everything
+    for (const r of rows) {
+      if (r.status !== 'completed' && (r.qty_done ?? 0) === 0) toDelete.push(r.id)
+    }
+  }
+
+  if (toDelete.length === 0) return []
+  for (let i = 0; i < toDelete.length; i += 100) {
+    const chunk = toDelete.slice(i, i + 100)
+    const { error: delErr } = await supabase.from('schedule').delete().in('id', chunk)
+    if (delErr) throw new Error(`Deleting phantom rows: ${delErr.message}`)
+  }
+  return toDelete
+}
+
 // Mark exactly one schedule row's qty_done. Used by MES Station's
 // Complete Step confirm modal — it knows its own row id and the qty the
 // operator counted, no distribution needed.

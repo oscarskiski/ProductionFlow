@@ -5,7 +5,7 @@ import QtyStepper from '../components/QtyStepper'
 import { useAppData } from '../store/AppDataContext'
 import {
   buildOrderTracking, distributeQtyAcrossRows, setStepQtyDone,
-  rescheduleOrderLeftovers,
+  rescheduleOrderLeftovers, cleanupDoneStepPhantoms,
 } from '../lib/tracking'
 import { markReadyForDispatch } from '../lib/orders'
 import { supabase } from '../lib/supabase'
@@ -565,6 +565,26 @@ export default function TrackingScreen() {
 
   const currentWeek = useMemo(() => isoWeekOf(new Date()), [])
   const today = useMemo(() => todayDateStr(), [])
+
+  // Auto-heal: once data is loaded, sweep out phantom queued rows left on
+  // finished steps by an earlier over-scheduling Regenerate (the bug where
+  // "done" parts still showed on the Schedule). Runs once per mount, silently.
+  const healedRef = useRef(false)
+  useEffect(() => {
+    if (healedRef.current) return
+    if (!enrichedOrders?.length || !schedule?.length) return
+    healedRef.current = true
+    ;(async () => {
+      try {
+        const deleted = await cleanupDoneStepPhantoms({
+          orders: enrichedOrders, productByCode, partsByProduct, stepsByPart,
+        })
+        if (deleted.length > 0) applyScheduleReschedule({ deleted })
+      } catch (e) {
+        console.warn('[Tracking] phantom cleanup skipped:', e.message || e)
+      }
+    })()
+  }, [enrichedOrders, schedule, productByCode, partsByProduct, stepsByPart, applyScheduleReschedule])
 
   // Index: schedule rows by `${order_id}:${machine_step_id}` for O(1) lookup.
   const scheduleByOrderStep = useMemo(() => {

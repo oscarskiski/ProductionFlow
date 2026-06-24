@@ -10,6 +10,7 @@ import {
   shiftForDate, workDatesOfWeek, timeToMin, effectiveShiftMinutes,
 } from '../lib/scheduleEngine'
 import { setScheduleRowStatus } from '../lib/scheduleStatus'
+import { cleanupDoneStepPhantoms } from '../lib/tracking'
 import { supabase } from '../lib/supabase'
 import {
   Hammer, Scissors, Activity, Truck, Grid, ChevronLeft, ChevronRight,
@@ -1134,6 +1135,7 @@ export default function ScheduleScreen() {
     enrichedOrders, machineByName,
     loading, error,
     applyScheduleRegenerate, applyScheduleByOrders, applyScheduleRowUpdate,
+    applyScheduleReschedule,
   } = useAppData()
   const canModify = canEdit()
 
@@ -1525,8 +1527,23 @@ export default function ScheduleScreen() {
       const { inserted, rows: insertedRows } = await writeScheduleRows({ orderIds, rows })
       applyScheduleByOrders(orderIds, insertedRows)
       setOverflowMachineIds(new Set(summary.overflowedMachineIds))
+
+      // Regenerate re-schedules each order's FULL quantity but keeps already
+      // completed rows — so finished steps would get a duplicate queued copy.
+      // Sweep those phantoms immediately so done work never reappears.
+      let phantomsRemoved = 0
+      try {
+        const deleted = await cleanupDoneStepPhantoms({
+          orders: enrichedOrders, productByCode, partsByProduct, stepsByPart, orderIds,
+        })
+        phantomsRemoved = deleted.length
+        if (deleted.length > 0) applyScheduleReschedule({ deleted })
+      } catch (e) {
+        console.warn('[Schedule] phantom cleanup after regenerate skipped:', e.message || e)
+      }
+
       const skippedTotal = Object.values(summary.skipped).reduce((a, n) => a + n, 0)
-      setGenMsg(`Generated ${inserted} schedule rows for week ${week}.${orphansRemoved > 0 ? ` Cleaned ${orphansRemoved} orphan row(s).` : ''}${skippedTotal > 0 ? ` Skipped ${skippedTotal} step(s).` : ''}`)
+      setGenMsg(`Generated ${inserted} schedule rows for week ${week}.${orphansRemoved > 0 ? ` Cleaned ${orphansRemoved} orphan row(s).` : ''}${phantomsRemoved > 0 ? ` Removed ${phantomsRemoved} duplicate row(s) on finished work.` : ''}${skippedTotal > 0 ? ` Skipped ${skippedTotal} step(s).` : ''}`)
     } catch (e) {
       setGenMsg(`Generation failed: ${e.message || String(e)}`)
     } finally {
