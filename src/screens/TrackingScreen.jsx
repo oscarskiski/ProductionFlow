@@ -12,7 +12,7 @@ import { supabase } from '../lib/supabase'
 import { isoWeek, isoWeekDayToDate } from '../lib/scheduling'
 import {
   Hammer, Scissors, Activity, Truck, Grid, Search,
-  ChevronRight, ChevronDown, Expand, Check, Minus, X, CalendarPlus, PackageCheck,
+  ChevronRight, ChevronLeft, ChevronDown, Expand, Check, Minus, X, CalendarPlus, PackageCheck,
   CalendarDays,
 } from 'lucide-react'
 
@@ -73,12 +73,33 @@ html, body {
 .search-box.active { border-color: var(--navy); }
 .search-box input { border: 0; background: transparent; outline: 0; font: inherit; font-size: 13px; color: var(--ink); width: 100%; }
 .search-box .ic { color: var(--ink-3); flex-shrink: 0; }
-.prod-day-filter { display: inline-flex; align-items: center; gap: 7px; background: var(--surface); border: 1px solid var(--hairline-2); border-radius: 10px; padding: 0 6px 0 11px; height: 36px; box-shadow: 0 1px 2px rgba(26,29,36,0.04); }
-.prod-day-filter .ic { color: var(--ink-3); flex-shrink: 0; }
-.prod-day-filter select { appearance: none; -webkit-appearance: none; border: 0; background: transparent; outline: 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--ink); cursor: pointer; padding: 8px 22px 8px 4px; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8e99' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 4px center; }
-.prod-day-filter.active { background: var(--navy-soft); border-color: rgba(31,42,68,0.28); }
-.prod-day-filter.active .ic { color: var(--navy); }
-.prod-day-filter.active select { color: var(--navy); }
+.prod-day-filter { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+.prod-day-filter .pd-trigger { display: inline-flex; align-items: center; gap: 7px; background: var(--surface); border: 1px solid var(--hairline-2); border-radius: 10px; padding: 0 11px; height: 36px; font: inherit; font-size: 12px; font-weight: 600; color: var(--ink); cursor: pointer; box-shadow: 0 1px 2px rgba(26,29,36,0.04); white-space: nowrap; }
+.prod-day-filter .pd-trigger:hover { background: var(--surface-2); }
+.prod-day-filter .pd-trigger .ic { color: var(--ink-3); flex-shrink: 0; }
+.prod-day-filter.active .pd-trigger { background: var(--navy-soft); border-color: rgba(31,42,68,0.28); color: var(--navy); }
+.prod-day-filter.active .pd-trigger .ic { color: var(--navy); }
+.prod-day-filter .pd-count { font-size: 11px; font-weight: 700; color: #fff; background: var(--navy); border-radius: 999px; padding: 1px 7px; }
+.prod-day-filter .pd-clear { appearance: none; border: 1px solid var(--hairline-2); background: var(--surface); color: var(--ink-3); border-radius: 9px; width: 32px; height: 36px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.prod-day-filter .pd-clear:hover { background: var(--surface-2); color: var(--ink); }
+
+.pd-pop { position: absolute; top: calc(100% + 8px); left: 0; z-index: 40; width: 284px; background: var(--surface); border: 1px solid var(--hairline-2); border-radius: 14px; box-shadow: 0 12px 32px rgba(26,29,36,0.16), 0 4px 8px rgba(26,29,36,0.06); padding: 12px; }
+.pd-pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.pd-pop-head span { font-size: 13px; font-weight: 700; color: var(--ink); }
+.pd-pop-head button { appearance: none; border: 0; background: var(--surface-2); color: var(--ink-2); border-radius: 8px; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.pd-pop-head button:hover { background: var(--hairline-2); color: var(--ink); }
+.pd-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.pd-dow { margin-bottom: 4px; }
+.pd-dow-c { text-align: center; font-size: 10px; font-weight: 700; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 0; }
+.pd-cell { appearance: none; border: 0; background: transparent; font: inherit; font-size: 13px; color: var(--ink-2); height: 34px; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.pd-cell.empty { visibility: hidden; cursor: default; }
+.pd-cell:hover:not(.empty) { background: var(--surface-2); }
+.pd-cell.has-work { font-weight: 700; color: var(--navy); text-decoration: underline; text-decoration-color: var(--amber); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.pd-cell.sel { background: var(--navy); color: #fff; }
+.pd-cell.sel.has-work { color: #fff; text-decoration-color: rgba(255,255,255,0.75); }
+.pd-pop-foot { margin-top: 10px; border-top: 1px solid var(--hairline); padding-top: 10px; }
+.pd-all { width: 100%; appearance: none; border: 1px solid var(--hairline-2); background: var(--surface-2); color: var(--ink-2); border-radius: 9px; padding: 8px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.pd-all:hover { background: var(--surface); color: var(--ink); }
 .search-box .search-count { font-size: 11px; font-weight: 600; color: var(--ink-3); white-space: nowrap; flex-shrink: 0; }
 .search-box .search-clear { appearance: none; border: 0; background: var(--surface-2); color: var(--ink-3); border-radius: 999px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; padding: 0; }
 .search-box .search-clear:hover { background: var(--hairline-2); color: var(--ink); }
@@ -272,13 +293,6 @@ function isoWeekOf(date) {
   d.setUTCDate(d.getUTCDate() + 4 - day)
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
   return Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
-}
-
-const PD_WDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const PD_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-// Friendly label for a production day, e.g. "Mon 23 Jun · Wk26".
-function prodDayLabel(date, week) {
-  return `${PD_WDAYS[date.getDay()]} ${date.getDate()} ${PD_MONTHS[date.getMonth()]} · Wk${week}`
 }
 
 function todayDateStr() {
@@ -555,6 +569,102 @@ function RescheduleModal({ ctx, saving, error, onClose, onConfirm }) {
   )
 }
 
+const CAL_WD_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const CAL_MO_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const CAL_MO_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+const CAL_DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+// Custom production-day picker. A native <input type=date> can't be styled, so
+// this is a small month calendar whose days WITH work are underlined (amber).
+// value = '' (all) or 'YYYY-MM-DD'. countByDate = Map<dateStr, orderCount>.
+function ProdDayPicker({ value, onChange, countByDate }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const firstWorkDate = () => {
+    const keys = [...countByDate.keys()].sort()
+    return keys.length ? new Date(keys[0] + 'T00:00:00') : new Date()
+  }
+  const [view, setView] = useState(() => {
+    const base = value ? new Date(value + 'T00:00:00') : firstWorkDate()
+    return new Date(base.getFullYear(), base.getMonth(), 1)
+  })
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const openCal = () => {
+    const base = value ? new Date(value + 'T00:00:00') : firstWorkDate()
+    setView(new Date(base.getFullYear(), base.getMonth(), 1))
+    setOpen(true)
+  }
+
+  const y = view.getFullYear()
+  const m = view.getMonth()
+  const firstDow = (new Date(y, m, 1).getDay() + 6) % 7 // Mon=0
+  const daysInMonth = new Date(y, m + 1, 0).getDate()
+  const cells = []
+  for (let i = 0; i < firstDow; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+
+  const triggerLabel = value
+    ? (() => { const d = new Date(value + 'T00:00:00'); return `${CAL_WD_SHORT[d.getDay()]} ${d.getDate()} ${CAL_MO_SHORT[d.getMonth()]}` })()
+    : 'Production day'
+
+  return (
+    <div className={`prod-day-filter ${value ? 'active' : ''}`} ref={ref}>
+      <button type="button" className="pd-trigger" onClick={() => (open ? setOpen(false) : openCal())} title="Filter by production day">
+        <CalendarDays size={14} strokeWidth={1.8} className="ic" />
+        {triggerLabel}
+        {value && <span className="pd-count">{countByDate.get(value) || 0}</span>}
+      </button>
+      {value && (
+        <button type="button" className="pd-clear" onClick={() => onChange('')} aria-label="Clear production-day filter">
+          <X size={14} strokeWidth={2.2} />
+        </button>
+      )}
+      {open && (
+        <div className="pd-pop">
+          <div className="pd-pop-head">
+            <button type="button" onClick={() => setView(new Date(y, m - 1, 1))} aria-label="Previous month"><ChevronLeft size={16} /></button>
+            <span>{CAL_MO_FULL[m]} {y}</span>
+            <button type="button" onClick={() => setView(new Date(y, m + 1, 1))} aria-label="Next month"><ChevronRight size={16} /></button>
+          </div>
+          <div className="pd-grid pd-dow">
+            {CAL_DOW.map((d) => <span key={d} className="pd-dow-c">{d}</span>)}
+          </div>
+          <div className="pd-grid">
+            {cells.map((d, i) => {
+              if (d == null) return <span key={i} className="pd-cell empty" />
+              const ds = isoOf(new Date(y, m, d))
+              const cnt = countByDate.get(ds) || 0
+              const isSel = ds === value
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  className={`pd-cell ${cnt > 0 ? 'has-work' : ''} ${isSel ? 'sel' : ''}`}
+                  onClick={() => { onChange(ds); setOpen(false) }}
+                  title={cnt > 0 ? `${cnt} order(s) in production` : 'No orders'}
+                >
+                  {d}
+                </button>
+              )
+            })}
+          </div>
+          <div className="pd-pop-foot">
+            <button type="button" className="pd-all" onClick={() => { onChange(''); setOpen(false) }}>All production days</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function TrackingScreen() {
   const {
     enrichedOrders, partsByProduct, stepsByPart, productByCode, machineByName, machines,
@@ -568,8 +678,8 @@ export default function TrackingScreen() {
 
   const [dept, setDept] = useState('all')
   const [query, setQuery] = useState('')
-  // Production-day filter — 'all' or a `${prod_week}:${prod_day}` key (or 'none').
-  const [prodDayFilter, setProdDayFilter] = useState('all')
+  // Production-day filter — '' (all) or a picked calendar date 'YYYY-MM-DD'.
+  const [prodDate, setProdDate] = useState('')
   const [expandSignal, setExpandSignal] = useState({ all: false, at: 0 })
   const [rescheduleCtx, setRescheduleCtx] = useState(null)
   const [rescheduleSaving, setRescheduleSaving] = useState(false)
@@ -645,43 +755,32 @@ export default function TrackingScreen() {
       })
   }, [enrichedOrders, dept, query, productByCode, partsByProduct])
 
-  // Distinct production days in the current view → the day-filter dropdown.
-  // Key = `${prod_week}:${prod_day}`, or 'none' for orders with no planned day.
-  // Sorted by real calendar date; 'Unscheduled' last.
-  const prodDayOptions = useMemo(() => {
-    const counts = new Map()
-    for (const o of baseFiltered) {
-      const key = (o.prod_week != null && o.prod_day != null) ? `${o.prod_week}:${o.prod_day}` : 'none'
-      counts.set(key, (counts.get(key) || 0) + 1)
-    }
-    const yr = new Date().getFullYear()
-    const opts = []
-    for (const [key, count] of counts) {
-      if (key === 'none') continue
-      const [w, d] = key.split(':').map(Number)
-      const date = isoWeekDayToDate(yr, w, d)
-      opts.push({ key, count, sort: date.getTime(), label: prodDayLabel(date, w) })
-    }
-    opts.sort((a, b) => a.sort - b.sort)
-    if (counts.has('none')) opts.push({ key: 'none', count: counts.get('none'), label: 'Unscheduled' })
-    return opts
-  }, [baseFiltered])
+  const prodYear = useMemo(() => new Date().getFullYear(), [])
 
-  // If the selected day disappears (dept/search change), fall back to All.
-  useEffect(() => {
-    if (prodDayFilter !== 'all' && !prodDayOptions.some((o) => o.key === prodDayFilter)) {
-      setProdDayFilter('all')
+  // An order's planned production date as 'YYYY-MM-DD' (from prod_week/prod_day),
+  // or null when it has no planned day. Used to match the picked calendar date.
+  const orderProdDate = (o) => {
+    if (o.prod_week == null || o.prod_day == null) return null
+    const d = isoWeekDayToDate(prodYear, o.prod_week, o.prod_day)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  // Production dates present in the current view → calendar bounds + per-day
+  // counts (how many orders fall on the picked day).
+  const prodDateMeta = useMemo(() => {
+    const countByDate = new Map()
+    for (const o of baseFiltered) {
+      const ds = orderProdDate(o)
+      if (!ds) continue
+      countByDate.set(ds, (countByDate.get(ds) || 0) + 1)
     }
-  }, [prodDayOptions, prodDayFilter])
+    const all = [...countByDate.keys()].sort()
+    return { countByDate, min: all[0] || '', max: all[all.length - 1] || '' }
+  }, [baseFiltered, prodYear])
 
   const visible = useMemo(() => {
     let list = baseFiltered
-    if (prodDayFilter !== 'all') {
-      list = list.filter((o) => {
-        const key = (o.prod_week != null && o.prod_day != null) ? `${o.prod_week}:${o.prod_day}` : 'none'
-        return key === prodDayFilter
-      })
-    }
+    if (prodDate) list = list.filter((o) => orderProdDate(o) === prodDate)
     return list
       .map((o) => {
         const product = productByCode.get(o.product_code)
@@ -696,7 +795,7 @@ export default function TrackingScreen() {
         const bCr = b.order.cr ?? Infinity
         return aCr - bCr
       })
-  }, [baseFiltered, prodDayFilter, productByCode, partsByProduct, stepsByPart, scheduleByOrderStep])
+  }, [baseFiltered, prodDate, prodYear, productByCode, partsByProduct, stepsByPart, scheduleByOrderStep])
 
   const stats = useMemo(() => {
     const ordersActive = visible.length
@@ -901,19 +1000,11 @@ export default function TrackingScreen() {
                 </button>
               ))}
             </div>
-            <div className={`prod-day-filter ${prodDayFilter !== 'all' ? 'active' : ''}`}>
-              <CalendarDays size={14} strokeWidth={1.8} className="ic" />
-              <select
-                value={prodDayFilter}
-                onChange={(e) => setProdDayFilter(e.target.value)}
-                aria-label="Filter by production day"
-              >
-                <option value="all">All production days</option>
-                {prodDayOptions.map((o) => (
-                  <option key={o.key} value={o.key}>{o.label} ({o.count})</option>
-                ))}
-              </select>
-            </div>
+            <ProdDayPicker
+              value={prodDate}
+              onChange={setProdDate}
+              countByDate={prodDateMeta.countByDate}
+            />
             <div className={`search-box ${query ? 'active' : ''}`}>
               <Search size={14} strokeWidth={1.8} className="ic" />
               <input
