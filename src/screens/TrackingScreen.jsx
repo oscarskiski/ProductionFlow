@@ -9,10 +9,11 @@ import {
 } from '../lib/tracking'
 import { markReadyForDispatch } from '../lib/orders'
 import { supabase } from '../lib/supabase'
-import { isoWeek } from '../lib/scheduling'
+import { isoWeek, isoWeekDayToDate } from '../lib/scheduling'
 import {
   Hammer, Scissors, Activity, Truck, Grid, Search,
   ChevronRight, ChevronDown, Expand, Check, Minus, X, CalendarPlus, PackageCheck,
+  CalendarDays,
 } from 'lucide-react'
 
 const DEFAULT_RESCHEDULE_QUICK = [
@@ -72,6 +73,12 @@ html, body {
 .search-box.active { border-color: var(--navy); }
 .search-box input { border: 0; background: transparent; outline: 0; font: inherit; font-size: 13px; color: var(--ink); width: 100%; }
 .search-box .ic { color: var(--ink-3); flex-shrink: 0; }
+.prod-day-filter { display: inline-flex; align-items: center; gap: 7px; background: var(--surface); border: 1px solid var(--hairline-2); border-radius: 10px; padding: 0 6px 0 11px; height: 36px; box-shadow: 0 1px 2px rgba(26,29,36,0.04); }
+.prod-day-filter .ic { color: var(--ink-3); flex-shrink: 0; }
+.prod-day-filter select { appearance: none; -webkit-appearance: none; border: 0; background: transparent; outline: 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--ink); cursor: pointer; padding: 8px 22px 8px 4px; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8e99' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); background-repeat: no-repeat; background-position: right 4px center; }
+.prod-day-filter.active { background: var(--navy-soft); border-color: rgba(31,42,68,0.28); }
+.prod-day-filter.active .ic { color: var(--navy); }
+.prod-day-filter.active select { color: var(--navy); }
 .search-box .search-count { font-size: 11px; font-weight: 600; color: var(--ink-3); white-space: nowrap; flex-shrink: 0; }
 .search-box .search-clear { appearance: none; border: 0; background: var(--surface-2); color: var(--ink-3); border-radius: 999px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; padding: 0; }
 .search-box .search-clear:hover { background: var(--hairline-2); color: var(--ink); }
@@ -265,6 +272,13 @@ function isoWeekOf(date) {
   d.setUTCDate(d.getUTCDate() + 4 - day)
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
   return Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+}
+
+const PD_WDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const PD_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+// Friendly label for a production day, e.g. "Mon 23 Jun · Wk26".
+function prodDayLabel(date, week) {
+  return `${PD_WDAYS[date.getDay()]} ${date.getDate()} ${PD_MONTHS[date.getMonth()]} · Wk${week}`
 }
 
 function todayDateStr() {
@@ -554,6 +568,8 @@ export default function TrackingScreen() {
 
   const [dept, setDept] = useState('all')
   const [query, setQuery] = useState('')
+  // Production-day filter — 'all' or a `${prod_week}:${prod_day}` key (or 'none').
+  const [prodDayFilter, setProdDayFilter] = useState('all')
   const [expandSignal, setExpandSignal] = useState({ all: false, at: 0 })
   const [rescheduleCtx, setRescheduleCtx] = useState(null)
   const [rescheduleSaving, setRescheduleSaving] = useState(false)
@@ -598,7 +614,10 @@ export default function TrackingScreen() {
     return m
   }, [schedule])
 
-  const visible = useMemo(() => {
+  // Base filter chain (status / dispatch / dept / search). Shared by both the
+  // production-day filter options AND the final list, so the day dropdown shows
+  // accurate counts for the current dept + search.
+  const baseFiltered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return enrichedOrders
       .filter((o) => o.status !== 'completed')
@@ -624,6 +643,46 @@ export default function TrackingScreen() {
         ]
         return hay.some((v) => String(v ?? '').toLowerCase().includes(q))
       })
+  }, [enrichedOrders, dept, query, productByCode, partsByProduct])
+
+  // Distinct production days in the current view → the day-filter dropdown.
+  // Key = `${prod_week}:${prod_day}`, or 'none' for orders with no planned day.
+  // Sorted by real calendar date; 'Unscheduled' last.
+  const prodDayOptions = useMemo(() => {
+    const counts = new Map()
+    for (const o of baseFiltered) {
+      const key = (o.prod_week != null && o.prod_day != null) ? `${o.prod_week}:${o.prod_day}` : 'none'
+      counts.set(key, (counts.get(key) || 0) + 1)
+    }
+    const yr = new Date().getFullYear()
+    const opts = []
+    for (const [key, count] of counts) {
+      if (key === 'none') continue
+      const [w, d] = key.split(':').map(Number)
+      const date = isoWeekDayToDate(yr, w, d)
+      opts.push({ key, count, sort: date.getTime(), label: prodDayLabel(date, w) })
+    }
+    opts.sort((a, b) => a.sort - b.sort)
+    if (counts.has('none')) opts.push({ key: 'none', count: counts.get('none'), label: 'Unscheduled' })
+    return opts
+  }, [baseFiltered])
+
+  // If the selected day disappears (dept/search change), fall back to All.
+  useEffect(() => {
+    if (prodDayFilter !== 'all' && !prodDayOptions.some((o) => o.key === prodDayFilter)) {
+      setProdDayFilter('all')
+    }
+  }, [prodDayOptions, prodDayFilter])
+
+  const visible = useMemo(() => {
+    let list = baseFiltered
+    if (prodDayFilter !== 'all') {
+      list = list.filter((o) => {
+        const key = (o.prod_week != null && o.prod_day != null) ? `${o.prod_week}:${o.prod_day}` : 'none'
+        return key === prodDayFilter
+      })
+    }
+    return list
       .map((o) => {
         const product = productByCode.get(o.product_code)
         const parts = product ? (partsByProduct.get(product.id) || []) : []
@@ -637,7 +696,7 @@ export default function TrackingScreen() {
         const bCr = b.order.cr ?? Infinity
         return aCr - bCr
       })
-  }, [enrichedOrders, dept, query, productByCode, partsByProduct, stepsByPart, scheduleByOrderStep])
+  }, [baseFiltered, prodDayFilter, productByCode, partsByProduct, stepsByPart, scheduleByOrderStep])
 
   const stats = useMemo(() => {
     const ordersActive = visible.length
@@ -841,6 +900,19 @@ export default function TrackingScreen() {
                   {label}
                 </button>
               ))}
+            </div>
+            <div className={`prod-day-filter ${prodDayFilter !== 'all' ? 'active' : ''}`}>
+              <CalendarDays size={14} strokeWidth={1.8} className="ic" />
+              <select
+                value={prodDayFilter}
+                onChange={(e) => setProdDayFilter(e.target.value)}
+                aria-label="Filter by production day"
+              >
+                <option value="all">All production days</option>
+                {prodDayOptions.map((o) => (
+                  <option key={o.key} value={o.key}>{o.label} ({o.count})</option>
+                ))}
+              </select>
             </div>
             <div className={`search-box ${query ? 'active' : ''}`}>
               <Search size={14} strokeWidth={1.8} className="ic" />
