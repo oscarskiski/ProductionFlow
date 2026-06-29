@@ -19,6 +19,7 @@ import {
   SlidersHorizontal,
   Loader2,
   GitMerge,
+  Coins,
 } from 'lucide-react'
 
 const iconMap = {
@@ -38,6 +39,7 @@ const iconMap = {
   logout: LogOut,
   options: SlidersHorizontal,
   merge: GitMerge,
+  coins: Coins,
 }
 
 function I({ n, s = 16, w = 1.8 }) {
@@ -300,6 +302,7 @@ const sections = [
     group: 'Config', items: [
       { id: 'prod', to: '/products', label: 'Products', icon: 'pkg', roles: ['Boss', 'Manager'] },
       { id: 'mach', to: '/machines', label: 'Machines', icon: 'machine', roles: ['Boss', 'Manager'] },
+      { id: 'cost', to: '/costing', label: 'Costing', icon: 'coins', roles: ['Boss'] },
       { id: 'cust', to: '/customers', label: 'Customers', icon: 'users', roles: ['Boss', 'Manager'] },
       { id: 'opts', to: '/options', label: 'Options', icon: 'options', roles: ['Boss'] },
     ],

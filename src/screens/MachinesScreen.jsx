@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import TopbarActions from '../components/TopbarActions'
 import { addMachine, updateMachine, deleteMachine, reorderMachines } from '../lib/seedMachines'
-import { canEdit } from '../lib/auth'
+import { canEdit, getCurrentUser } from '../lib/auth'
 import { useConfirm } from '../components/ConfirmDialog'
 import { useAppData } from '../store/AppDataContext'
 import {
@@ -286,6 +286,9 @@ function EditMachineModal({ machine, onCancel, onSaved, onDeleted }) {
   const [color, setColor] = useState(machine.color || DEFAULT_COLOR)
   const [bottleneck, setBottleneck] = useState(Boolean(machine.bottleneck))
   const [setupTime, setSetupTime] = useState(Number(machine.setup_time_min) || 0)
+  const [rate, setRate] = useState(machine.rate_per_hour != null ? String(machine.rate_per_hour) : '')
+  // Labour rate is sensitive — only the Boss can see or edit it.
+  const isBoss = getCurrentUser()?.role === 'Boss'
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState(null)
@@ -297,7 +300,8 @@ function EditMachineModal({ machine, onCancel, onSaved, onDeleted }) {
     trimmedArea !== (machine.area || '').trim() ||
     color !== (machine.color || DEFAULT_COLOR) ||
     bottleneck !== Boolean(machine.bottleneck) ||
-    setupTime !== (Number(machine.setup_time_min) || 0)
+    setupTime !== (Number(machine.setup_time_min) || 0) ||
+    (isBoss && (rate === '' ? null : Math.max(0, Number(rate) || 0)) !== (machine.rate_per_hour ?? null))
   const busy = saving || deleting
   const canSave = trimmedName.length > 0 && dirty && !busy
 
@@ -314,6 +318,8 @@ function EditMachineModal({ machine, onCancel, onSaved, onDeleted }) {
       bottleneck,
       setup_time_min: Math.max(0, Number(setupTime) || 0),
     }
+    // Only the Boss may write the labour rate.
+    if (isBoss) patch.rate_per_hour = rate === '' ? null : Math.max(0, Number(rate) || 0)
     onSaved({ ...machine, ...patch })
     updateMachine(machine.id, patch).catch((e) => {
       // Local cache shows the new value but server didn't take it. Surface
@@ -387,6 +393,28 @@ function EditMachineModal({ machine, onCancel, onSaved, onDeleted }) {
             Charged once per product per day on this machine. Same product back-to-back skips setup.
           </div>
         </div>
+        {isBoss && (
+        <div className="e-field">
+          <label>Labour rate (R / hour)</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontWeight: 700, color: 'var(--ink-2)' }}>R</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              placeholder="0.00"
+              style={{ flex: 1 }}
+            />
+            <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>/ hour</span>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+            Used by the Labour Costing screen to price machine time. Leave blank if unknown.
+          </div>
+        </div>
+        )}
         {error && <div className="e-err">{error}</div>}
         <div className="e-actions">
           <button className="e-delete" type="button" onClick={handleDelete} disabled={busy}>

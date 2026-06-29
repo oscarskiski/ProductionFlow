@@ -8,6 +8,7 @@ import DispatchScreen from './screens/DispatchScreen'
 import TrackingScreen from './screens/TrackingScreen'
 import ProductsScreen from './screens/ProductsScreen'
 import MachinesScreen from './screens/MachinesScreen'
+import CostingScreen from './screens/CostingScreen'
 import CustomersScreen from './screens/CustomersScreen'
 import OptionsScreen from './screens/OptionsScreen'
 import ImportScreen from './screens/ImportScreen'
@@ -34,6 +35,11 @@ function App() {
         <Route path="/machines" element={
           <RoleGate allow={['Boss', 'Manager']}>
             <MachinesScreen />
+          </RoleGate>
+        } />
+        <Route path="/costing" element={
+          <RoleGate allow={['Boss']}>
+            <CostingScreen />
           </RoleGate>
         } />
         <Route path="/customers" element={

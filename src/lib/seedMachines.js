@@ -161,7 +161,7 @@ export async function addMachine(name, department, opts = {}) {
   await supabase.from('machines').update({ display_order: nextPos }).eq('id', row.id)
   const { data, error } = await supabase
     .from('machines')
-    .select('id, name, department, color, area, bottleneck, active, display_order, setup_time_min')
+    .select('id, name, department, color, area, bottleneck, active, display_order, setup_time_min, rate_per_hour')
     .eq('id', row.id)
     .single()
   if (error) return row
@@ -191,7 +191,7 @@ export async function updateMachine(id, patch) {
     .from('machines')
     .update(patch)
     .eq('id', id)
-    .select('id, name, department, color, area, bottleneck, active, display_order, setup_time_min')
+    .select('id, name, department, color, area, bottleneck, active, display_order, setup_time_min, rate_per_hour')
     .single()
   if (error) throw new Error(`Updating machine: ${error.message}`)
   return data
