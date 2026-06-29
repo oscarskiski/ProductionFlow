@@ -375,7 +375,8 @@ const printStyles = `
 .pf-part { font-weight:700; font-size:13px; line-height:1.15; }
 .pf-asm { display:inline-block; margin-left:5px; padding:0 5px; border-radius:4px; background:#e6edf7; color:#2b59a8; font-size:8px; font-weight:700; letter-spacing:.5px; vertical-align:middle; }
 .pf-setup { color:#b8860b; font-weight:600; font-size:9px; }
-.pf-product { font-size:10.5px; color:var(--pf-muted); line-height:1.15; }
+.pf-product { font-size:10.5px; color:var(--pf-muted); line-height:1.2; }
+.pf-prodqty { display:inline-block; margin-top:2px; padding:0 5px; border-radius:4px; background:#eef1f6; color:#2b3a5c; font-size:9px; font-weight:700; letter-spacing:.2px; white-space:nowrap; }
 .pf-tpu { font-variant-numeric:tabular-nums; font-weight:600; font-size:11px; white-space:nowrap; }
 .pf-tpu small { color:var(--pf-faint); font-weight:500; }
 .pf-sched { font-variant-numeric:tabular-nums; font-size:11px; white-space:nowrap; }
@@ -985,6 +986,8 @@ function jobPrintFields(job, machine) {
     : 0
   return {
     orderLabel, productName, partName, totalUnits, ratePerPart, setupShown,
+    orderQty: job._order?.qty ?? null,
+    qtyPerUnit: job._part?.qty_per_unit ?? null,
     isAsm: !!job._part?.is_assembly,
     start: fmtTime(job.start_time),
     stop: fmtTime(job.end_time),
@@ -1071,7 +1074,12 @@ function PrintSheet({ machine, jobs, shift, dateLabel, dayName, weekNum }) {
               <tr className="pf-job" key={`j${it.data.id}`}>
                 <td className="pf-c-n">{seq}</td>
                 <td className="pf-order">#{f.orderLabel}</td>
-                <td className="pf-product">{f.productName}</td>
+                <td className="pf-product">
+                  {f.productName}
+                  {f.orderQty != null && (
+                    <span className="pf-prodqty">{f.orderQty} product{f.orderQty === 1 ? '' : 's'}</span>
+                  )}
+                </td>
                 <td className="pf-part">
                   {f.partName}
                   {f.isAsm && <span className="pf-asm">ASM</span>}
