@@ -37,13 +37,17 @@ Deno.serve(async (req) => {
     const body = String(msg.body).slice(0, 160)
     const notification = JSON.stringify({ title, body, tag: 'productionflow-message' })
 
-    const { data: subs, error } = await supabase
+    const { data: allSubs, error } = await supabase
       .from('push_subscriptions')
-      .select('endpoint, p256dh, auth')
+      .select('endpoint, p256dh, auth, employee_id')
     if (error) throw error
 
+    // Don't notify the person who posted the message (skip their device(s)).
+    const subs = (allSubs ?? []).filter((s) =>
+      !(msg.author_id && s.employee_id && s.employee_id === msg.author_id))
+
     let sent = 0
-    await Promise.all((subs ?? []).map(async (s) => {
+    await Promise.all(subs.map(async (s) => {
       try {
         await webpush.sendNotification(
           { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
