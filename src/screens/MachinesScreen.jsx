@@ -159,6 +159,7 @@ html, body {
 .mach-row .swatch { width: 5px; height: 36px; border-radius: 3px; }
 .mach-row .info .name { font-size: 14px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 8px; }
 .mach-row .info .name .bn { background: var(--amber-soft); color: var(--amber); font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 4px; letter-spacing: 0.08em; text-transform: uppercase; }
+.mach-row .info .name .day-badge { background: var(--blue-soft); color: var(--blue); font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 4px; letter-spacing: 0.06em; text-transform: uppercase; }
 .mach-row .info .status { font-size: 11px; color: var(--ink-3); font-weight: 500; margin-top: 2px; }
 .mach-row .info .status.active { color: var(--green); }
 .mach-row .util { text-align: right; font-variant-numeric: tabular-nums; }
@@ -228,6 +229,20 @@ const COLOR_SWATCHES = [
 ]
 const DEFAULT_COLOR = '#9aa0ad'
 
+// Wood "day conveyor": each wood machine runs on a fixed day of the production
+// week. 0 = Monday (first day of manufacturing) … 4 = Friday (finishing). A part
+// can only advance to a machine on that machine's day. '' = unassigned.
+const WOOD_DAY_OPTIONS = [
+  { value: '', label: 'Unassigned' },
+  { value: 0, label: 'Day 0 — Mon (start)' },
+  { value: 1, label: 'Day 1 — Tue' },
+  { value: 2, label: 'Day 2 — Wed' },
+  { value: 3, label: 'Day 3 — Thu' },
+  { value: 4, label: 'Day 4 — Fri (finishing)' },
+]
+const woodDayShort = (d) =>
+  d == null || d === '' ? null : `Day ${d}`
+
 function MachRow({
   m, onEdit, onToggle, toggleBusy, canModify = true,
   draggable = false, isDragging = false, dropAbove = false, dropBelow = false,
@@ -259,6 +274,9 @@ function MachRow({
       <div className="info">
         <div className="name">
           {m.name} {m.bn && <span className="bn">Bottleneck</span>}
+          {m.woodDay != null && m.woodDay !== '' && (
+            <span className="day-badge">{woodDayShort(m.woodDay)}</span>
+          )}
         </div>
         <div className={`status ${on ? 'active' : ''}`}>{statusText}</div>
       </div>
@@ -286,6 +304,8 @@ function EditMachineModal({ machine, onCancel, onSaved, onDeleted }) {
   const [color, setColor] = useState(machine.color || DEFAULT_COLOR)
   const [bottleneck, setBottleneck] = useState(Boolean(machine.bottleneck))
   const [setupTime, setSetupTime] = useState(Number(machine.setup_time_min) || 0)
+  const [woodDay, setWoodDay] = useState(machine.wood_day == null ? '' : machine.wood_day)
+  const isWood = machine.department === 'wood'
   const [rate, setRate] = useState(machine.rate_per_hour != null ? String(machine.rate_per_hour) : '')
   // Labour rate is sensitive — only the Boss can see or edit it.
   const isBoss = getCurrentUser()?.role === 'Boss'
@@ -301,6 +321,7 @@ function EditMachineModal({ machine, onCancel, onSaved, onDeleted }) {
     color !== (machine.color || DEFAULT_COLOR) ||
     bottleneck !== Boolean(machine.bottleneck) ||
     setupTime !== (Number(machine.setup_time_min) || 0) ||
+    (isWood && (woodDay === '' ? null : Number(woodDay)) !== (machine.wood_day ?? null)) ||
     (isBoss && (rate === '' ? null : Math.max(0, Number(rate) || 0)) !== (machine.rate_per_hour ?? null))
   const busy = saving || deleting
   const canSave = trimmedName.length > 0 && dirty && !busy
@@ -318,6 +339,8 @@ function EditMachineModal({ machine, onCancel, onSaved, onDeleted }) {
       bottleneck,
       setup_time_min: Math.max(0, Number(setupTime) || 0),
     }
+    // Wood machines carry a conveyor day; other depts ignore the column.
+    if (isWood) patch.wood_day = woodDay === '' ? null : Number(woodDay)
     // Only the Boss may write the labour rate.
     if (isBoss) patch.rate_per_hour = rate === '' ? null : Math.max(0, Number(rate) || 0)
     onSaved({ ...machine, ...patch })
@@ -393,6 +416,23 @@ function EditMachineModal({ machine, onCancel, onSaved, onDeleted }) {
             Charged once per product per day on this machine. Same product back-to-back skips setup.
           </div>
         </div>
+        {isWood && (
+        <div className="e-field">
+          <label>Conveyor day</label>
+          <select
+            value={woodDay}
+            onChange={(e) => setWoodDay(e.target.value === '' ? '' : Number(e.target.value))}
+            style={{ padding: '9px 11px', border: '1px solid var(--hairline-2)', background: 'var(--surface-2)', borderRadius: 10, font: 'inherit', fontSize: 13, color: 'var(--ink)', appearance: 'none' }}
+          >
+            {WOOD_DAY_OPTIONS.map((o) => (
+              <option key={String(o.value)} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+            Which day of the production week this machine runs. Parts only reach it on this day.
+          </div>
+        </div>
+        )}
         {isBoss && (
         <div className="e-field">
           <label>Labour rate (R / hour)</label>
@@ -467,6 +507,7 @@ export default function MachinesScreen() {
   const [formColor, setFormColor] = useState(COLOR_SWATCHES[0].hex)
   const [formBottleneck, setFormBottleneck] = useState(false)
   const [formSetupTime, setFormSetupTime] = useState(0)
+  const [formWoodDay, setFormWoodDay] = useState('')
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState(null)
 
@@ -570,12 +611,14 @@ export default function MachinesScreen() {
         color: formColor,
         bottleneck: formBottleneck,
         setup_time_min: formSetupTime,
+        wood_day: dbDept === 'wood' && formWoodDay !== '' ? Number(formWoodDay) : null,
       })
       setFormName('')
       setFormArea('')
       setFormColor(COLOR_SWATCHES[0].hex)
       setFormBottleneck(false)
       setFormSetupTime(0)
+      setFormWoodDay('')
       applyMachineUpsert(created)
     } catch (e) {
       setAddError(e.message || String(e))
@@ -652,6 +695,16 @@ export default function MachinesScreen() {
                 <label>Setup Time (min)</label>
                 <Stepper value={formSetupTime} onChange={setFormSetupTime} step={5} min={0} />
               </div>
+              {dept === 'wood' && (
+              <div className="field">
+                <label>Conveyor Day</label>
+                <select value={formWoodDay} onChange={(e) => setFormWoodDay(e.target.value)}>
+                  {WOOD_DAY_OPTIONS.map((o) => (
+                    <option key={String(o.value)} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+              )}
               <div className="field">
                 <label>Colour</label>
                 <select value={formColor} onChange={(e) => setFormColor(e.target.value)}>
@@ -710,6 +763,7 @@ export default function MachinesScreen() {
                     color: m.color || DEFAULT_COLOR,
                     area: m.area,
                     bn: m.bottleneck,
+                    woodDay: m.department === 'wood' ? m.wood_day : null,
                     active: m.active,
                     util: 0,
                     min: 0,

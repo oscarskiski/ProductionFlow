@@ -132,7 +132,7 @@ export function AppDataProvider({ children }) {
 
       const [oData, pData, ptData, msData, mData, cData, eData, hData, bData, fData, schData, otData] = await Promise.all([
         loadAll('orders', ORDER_COLS),
-        loadAll('products', 'id, code, description, "group", department, default_priority, folder_id, abbreviations, is_dispatch_only'),
+        loadAll('products', 'id, code, description, "group", department, default_priority, folder_id, abbreviations, is_dispatch_only, wood_day_overrides'),
         loadAll('parts', 'id, product_id, name, qty_per_unit, length, width, thickness, material_code, part_priority, is_assembly, department'),
         loadAll('machine_steps', 'id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time'),
         loadAll('machines', '*'),
