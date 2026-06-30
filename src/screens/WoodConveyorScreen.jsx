@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
+import { NavLink } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import TopbarActions from '../components/TopbarActions'
 import { useAppData } from '../store/AppDataContext'
 import { buildWoodConveyor } from '../lib/woodDayEngine'
 import { isoWeek } from '../lib/scheduling'
-import { AlertTriangle, Factory, Info } from 'lucide-react'
+import { AlertTriangle, Info, Trees, ArrowRight } from 'lucide-react'
 
 const styles = `
 :root {
@@ -76,6 +77,18 @@ html, body {
 .loadbar .fill.bad { background: var(--red); }
 
 .empty { padding: 40px 20px; text-align: center; color: var(--ink-3); font-size: 13px; }
+
+.setup { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r-md); box-shadow: var(--shadow-card); padding: 36px 28px; text-align: center; max-width: 620px; margin: 8px auto; }
+.setup .badge { width: 52px; height: 52px; border-radius: 16px; background: var(--green-soft); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
+.setup .badge .ic { color: var(--green); }
+.setup h3 { margin: 0 0 8px; font-size: 18px; font-weight: 600; color: var(--ink); }
+.setup p { margin: 0 0 8px; font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.setup .prog { font-size: 13px; font-weight: 600; color: var(--ink); margin: 12px 0; }
+.setup .prog b { color: var(--amber); }
+.setup .names { font-size: 12px; color: var(--ink-3); background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 10px; padding: 10px 12px; margin: 12px auto 4px; text-align: left; max-width: 480px; }
+.setup .names b { color: var(--ink-2); display: block; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.setup .cta { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px; background: var(--navy); color: white; text-decoration: none; font-size: 13px; font-weight: 600; padding: 11px 18px; border-radius: 11px; box-shadow: 0 6px 14px rgba(31,42,68,0.22); }
+.setup .cta .ic { color: white; }
 .warns { background: var(--surface); border: 1px solid rgba(210,83,58,0.25); border-radius: var(--r-md); padding: 12px 14px; margin-bottom: 12px; }
 .warns h4 { margin: 0 0 8px; font-size: 12px; font-weight: 700; color: var(--red); display: flex; align-items: center; gap: 6px; }
 .warns ul { margin: 0; padding-left: 18px; }
@@ -98,9 +111,16 @@ const fmtMin = (m) => {
 
 export default function WoodConveyorScreen() {
   const {
-    orders, loading, error,
+    orders, machines, loading, error,
     productByCode, partsByProduct, stepsByPart, machineByName, holidaySet,
   } = useAppData()
+
+  // How many wood machines have a conveyor day set? Drives the setup prompt.
+  const woodSetup = useMemo(() => {
+    const wood = (machines || []).filter((m) => m.department === 'wood')
+    const withDay = wood.filter((m) => m.wood_day != null)
+    return { total: wood.length, set: withDay.length }
+  }, [machines])
 
   // Active orders only — completed/shipped orders aren't on the conveyor.
   const activeOrders = useMemo(
@@ -127,6 +147,24 @@ export default function WoodConveyorScreen() {
     const list = [...weeks.values()].map((w) => ({ week: w.week, dates: [...w.dates].sort() }))
     list.sort((a, b) => a.week - b.week)
     return list
+  }, [result])
+
+  // Aggregate warnings: collapse the per-(machine×order) "no conveyor day"
+  // spam into a single line listing the distinct machines, then dedupe the rest.
+  const summary = useMemo(() => {
+    const out = []
+    if (result.unassigned.size > 0) {
+      const names = [...result.unassigned].sort()
+      out.push(`${names.length} machine${names.length === 1 ? '' : 's'} still need a conveyor day (set in Machines → Wood): ${names.join(', ')}`)
+    }
+    const seen = new Set()
+    for (const w of result.warnings) {
+      if (w.type === 'unassigned') continue
+      if (seen.has(w.message)) continue
+      seen.add(w.message)
+      out.push(w.message)
+    }
+    return out
   }, [result])
 
   const [activeWeek, setActiveWeek] = useState(null)
@@ -182,25 +220,44 @@ export default function WoodConveyorScreen() {
           {loading && <div className="empty">Loading…</div>}
           {error && <div className="empty" style={{ color: 'var(--red)' }}>Failed to load: {error}</div>}
 
-          {!loading && !error && result.warnings.length > 0 && (
+          {/* Setup state: no wood machine has a day yet → guide, don't alarm. */}
+          {!loading && !error && woodSetup.set === 0 && (
+            <div className="setup">
+              <span className="badge"><Trees size={26} strokeWidth={1.8} className="ic" /></span>
+              <h3>Set up the wood conveyor</h3>
+              <p>Each wood machine needs a day number — 0 = Monday (first day of manufacturing) through 4 = Friday (finishing) — before the preview can lay out the week.</p>
+              <div className="prog">You've set <b>0</b> of {woodSetup.total} wood machines.</div>
+              {result.unassigned.size > 0 && (
+                <div className="names">
+                  <b>Machines your current orders use</b>
+                  {[...result.unassigned].sort().join(', ')}
+                </div>
+              )}
+              <NavLink to="/machines" className="cta">
+                Open Machines <ArrowRight size={15} className="ic" />
+              </NavLink>
+            </div>
+          )}
+
+          {/* Some machines set: show aggregated issues (one line per machine,
+              not one per machine×order) + the grid. */}
+          {!loading && !error && woodSetup.set > 0 && summary.length > 0 && (
             <div className="warns">
-              <h4><AlertTriangle size={14} /> {result.warnings.length} issue{result.warnings.length === 1 ? '' : 's'} to review</h4>
+              <h4><AlertTriangle size={14} /> {summary.length} issue{summary.length === 1 ? '' : 's'} to review</h4>
               <ul>
-                {dedupeWarnings(result.warnings).slice(0, 12).map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
+                {summary.slice(0, 15).map((t, i) => <li key={i}>{t}</li>)}
               </ul>
             </div>
           )}
 
-          {!loading && !error && byWeek.length === 0 && (
+          {!loading && !error && woodSetup.set > 0 && byWeek.length === 0 && (
             <div className="card"><div className="empty">
-              No wood orders to place. Make sure wood machines have a conveyor day set (Machines → Wood),
-              run migration 023, and that orders have a production week.
+              No wood orders land on the conveyor yet. Check that your active orders have a production week
+              (run Recalculate on the Import screen), and that the machines they use have a day set.
             </div></div>
           )}
 
-          {!loading && !error && byWeek.length > 0 && (
+          {!loading && !error && woodSetup.set > 0 && byWeek.length > 0 && (
             <>
               <div className="week-tabs">
                 {byWeek.map((w) => (
@@ -293,15 +350,4 @@ function groupItems(items) {
     m.get(key).workMin += it.workMin
   }
   return [...m.values()].sort((a, b) => b.workMin - a.workMin)
-}
-
-function dedupeWarnings(warnings) {
-  const seen = new Set()
-  const out = []
-  for (const w of warnings) {
-    if (seen.has(w.message)) continue
-    seen.add(w.message)
-    out.push(w.message)
-  }
-  return out
 }
