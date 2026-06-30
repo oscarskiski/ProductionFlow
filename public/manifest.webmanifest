@@ -1,0 +1,15 @@
+{
+  "name": "ProductionFlow",
+  "short_name": "ProductionFlow",
+  "description": "elmo's Furniture production management",
+  "start_url": "/ProductionFlow/",
+  "scope": "/ProductionFlow/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F5F3EF",
+  "theme_color": "#1f2a44",
+  "icons": [
+    { "src": "/ProductionFlow/logo.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/ProductionFlow/logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

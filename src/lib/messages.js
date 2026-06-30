@@ -47,9 +47,15 @@ export async function deleteMessage(id) {
 }
 
 // Live-subscribe to inserts and deletes. Returns an unsubscribe fn.
+// Each call gets a UNIQUE channel name — Supabase channels are singletons by
+// name, so two subscribers (e.g. the Dashboard board + the app-wide notifier)
+// sharing one name would make the second `.on()` throw "cannot add callbacks
+// after subscribe()".
+let channelSeq = 0
 export function subscribeMessages({ onInsert, onDelete }) {
+  channelSeq += 1
   const channel = supabase
-    .channel('messages-feed')
+    .channel(`messages-feed-${channelSeq}-${Math.random().toString(36).slice(2, 8)}`)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
       onInsert?.(payload.new)
     })

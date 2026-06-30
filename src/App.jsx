@@ -15,10 +15,12 @@ import ImportScreen from './screens/ImportScreen'
 import ReconcileScreen from './screens/ReconcileScreen'
 import MESStationScreen from './screens/MESStationScreen'
 import RoleGate from './components/RoleGate'
+import { MessagesProvider } from './store/MessagesContext'
 
 function App() {
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#F5F3EF' }}>
+      <MessagesProvider>
       <Routes>
         <Route path="/login" element={<LoginScreen />} />
         <Route path="/dashboard" element={<DashboardScreen />} />
@@ -65,6 +67,7 @@ function App() {
         <Route path="/mes-station" element={<MESStationScreen />} />
         <Route path="/" element={<Navigate to="/login" replace />} />
       </Routes>
+      </MessagesProvider>
     </div>
   )
 }

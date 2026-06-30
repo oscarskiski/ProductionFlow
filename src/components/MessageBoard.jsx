@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Megaphone, Send, Trash2 } from 'lucide-react'
+import { Megaphone, Send, Trash2, Bell, BellRing } from 'lucide-react'
 import { canEdit, getCurrentUser, deptLabel } from '../lib/auth'
 import {
   deleteMessage,
@@ -7,6 +7,7 @@ import {
   postMessage,
   subscribeMessages,
 } from '../lib/messages'
+import { useMessages } from '../store/MessagesContext'
 import { useConfirm } from './ConfirmDialog'
 
 const styles = `
@@ -29,6 +30,11 @@ const styles = `
 }
 .mb-head h2 .ic { width: 16px; height: 16px; color: var(--amber); }
 .mb-head .meta { font-size: 12px; color: var(--ink-3); font-weight: 500; }
+.mb-head-right { display: inline-flex; align-items: center; gap: 12px; }
+.mb-alert-btn { appearance: none; border: 1px solid var(--hairline-2); background: var(--surface-2); color: var(--ink-2); font: inherit; font-size: 11px; font-weight: 600; padding: 5px 10px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+.mb-alert-btn:hover { background: var(--surface); color: var(--navy); border-color: var(--navy); }
+.mb-alert-on { font-size: 11px; font-weight: 600; color: var(--green, #34c759); display: inline-flex; align-items: center; gap: 5px; }
+.mb-alert-hint { font-size: 11px; font-weight: 600; color: var(--amber, #e89a3c); }
 
 .mb-body { padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 12px; }
 
@@ -174,6 +180,24 @@ export default function MessageBoard() {
   const [error, setError] = useState('')
   const taRef = useRef(null)
   const { confirm, dialog: confirmDialog } = useConfirm()
+  const { markRead, enableAlerts, alertState } = useMessages()
+  const [alertBusy, setAlertBusy] = useState(false)
+  const [alertErr, setAlertErr] = useState('')
+
+  // Opening the board = you've seen the messages → clear the unread badge.
+  useEffect(() => { markRead() }, [markRead])
+
+  const handleEnableAlerts = async () => {
+    setAlertBusy(true)
+    setAlertErr('')
+    try {
+      await enableAlerts()
+    } catch (e) {
+      setAlertErr(e.message || String(e))
+    } finally {
+      setAlertBusy(false)
+    }
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -252,8 +276,24 @@ export default function MessageBoard() {
       <div className="mb-card">
         <div className="mb-head">
           <h2><Megaphone size={16} className="ic" /> Announcements</h2>
-          <div className="meta">
-            {messages.length === 0 ? 'No messages yet' : `${messages.length} message${messages.length === 1 ? '' : 's'}`}
+          <div className="mb-head-right">
+            {(alertState === 'off') && (
+              <button type="button" className="mb-alert-btn" onClick={handleEnableAlerts} disabled={alertBusy} title="Get a notification on this device when a new message arrives">
+                <Bell size={13} /> {alertBusy ? 'Enabling…' : 'Enable notifications'}
+              </button>
+            )}
+            {alertState === 'on' && (
+              <span className="mb-alert-on" title="Push notifications are on for this device"><BellRing size={13} /> Notifications on</span>
+            )}
+            {alertState === 'needs-install' && (
+              <span className="mb-alert-hint" title="On iPhone, add the app to your Home Screen first">Add to Home Screen for alerts</span>
+            )}
+            {alertState === 'denied' && (
+              <span className="mb-alert-hint">Notifications blocked in settings</span>
+            )}
+            <div className="meta">
+              {messages.length === 0 ? 'No messages yet' : `${messages.length} message${messages.length === 1 ? '' : 's'}`}
+            </div>
           </div>
         </div>
         <div className="mb-body">
@@ -284,6 +324,7 @@ export default function MessageBoard() {
           )}
 
           {error && <div className="mb-error">{error}</div>}
+          {alertErr && <div className="mb-error">{alertErr}</div>}
 
           <div className="mb-feed">
             {messages.length === 0 && (

@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { getCurrentUser, signOut, deptLabel } from '../lib/auth'
 import { useAppData } from '../store/AppDataContext'
+import { useMessages } from '../store/MessagesContext'
 import {
   Grid,
   List,
@@ -324,6 +325,7 @@ export default function Sidebar() {
   const navigate = useNavigate()
   const user = getCurrentUser()
   const { isLoading, lastSynced, orders } = useAppData()
+  const { unread: msgUnread } = useMessages()
   // Live counters surfaced as sidebar badges. Lookup by `badgeKey` on each
   // nav item — keeps the sections config declarative. Reconcile badge counts
   // only orders that NEED MANUAL ACTION (product code couldn't be matched
@@ -366,9 +368,13 @@ export default function Sidebar() {
               <div className="nav-title">{section.group}</div>
               {visible.map((item) => {
                 const liveBadge = item.badgeKey ? liveBadges[item.badgeKey] : null
-                const badge = liveBadge != null && liveBadge > 0 ? liveBadge : item.badge
-                // Reconcile pending = needs the user's attention; mark it red.
-                const isCritical = item.badgeKey === 'needsReview' && liveBadge > 0
+                // Dashboard carries the unread-messages badge.
+                const dashUnread = item.id === 'dash' ? msgUnread : 0
+                const badge = dashUnread > 0
+                  ? dashUnread
+                  : (liveBadge != null && liveBadge > 0 ? liveBadge : item.badge)
+                // Reconcile pending + new messages = needs attention → mark red.
+                const isCritical = (item.badgeKey === 'needsReview' && liveBadge > 0) || dashUnread > 0
                 return (
                   <NavLink
                     key={item.id}
@@ -409,8 +415,11 @@ export default function Sidebar() {
       <nav className="mobile-nav" aria-label="Main navigation">
         {mobileNavItems.map((item) => {
           const liveBadge = item.badgeKey ? liveBadges[item.badgeKey] : null
-          const badge = liveBadge != null && liveBadge > 0 ? liveBadge : item.badge
-          const isCritical = item.badgeKey === 'needsReview' && liveBadge > 0
+          const dashUnread = item.id === 'dash' ? msgUnread : 0
+          const badge = dashUnread > 0
+            ? dashUnread
+            : (liveBadge != null && liveBadge > 0 ? liveBadge : item.badge)
+          const isCritical = (item.badgeKey === 'needsReview' && liveBadge > 0) || dashUnread > 0
           return (
             <NavLink key={item.id} to={item.to} end className="mnav-item">
               <I n={item.icon} s={22} />
