@@ -21,6 +21,7 @@ import {
   Loader2,
   GitMerge,
   Coins,
+  Trees,
 } from 'lucide-react'
 
 const iconMap = {
@@ -41,6 +42,7 @@ const iconMap = {
   options: SlidersHorizontal,
   merge: GitMerge,
   coins: Coins,
+  trees: Trees,
 }
 
 function I({ n, s = 16, w = 1.8 }) {
@@ -291,6 +293,7 @@ const sections = [
       { id: 'reconcile', to: '/reconcile', label: 'Reconcile', icon: 'merge', roles: ['Boss', 'Manager'], badgeKey: 'needsReview' },
       { id: 'week', to: '/week', label: 'Week Plan', icon: 'cal' },
       { id: 'sched', to: '/schedule', label: 'Schedule', icon: 'wave' },
+      { id: 'wood', to: '/wood-conveyor', label: 'Wood Conveyor', icon: 'trees', roles: ['Boss', 'Manager'] },
     ],
   },
   {
