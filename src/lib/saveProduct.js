@@ -122,6 +122,12 @@ export async function createProductWithParts({
         alt_machine_names: cleanAlts,
         seconds_per_part: Number(s.seconds_per_part) || 0,
         setup_time: Number(s.setup_time) || 0,
+        // Wood conveyor v3: null = auto (compressed machine rank); a number pins
+        // this step to that day-offset. Only meaningful for wood steps.
+        wood_day_offset:
+          s.wood_day_offset != null && s.wood_day_offset !== ''
+            ? Number(s.wood_day_offset)
+            : null,
       })
     })
   })
@@ -131,7 +137,7 @@ export async function createProductWithParts({
     const { data, error: msErr } = await supabase
       .from('machine_steps')
       .insert(stepRows)
-      .select('id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time')
+      .select('id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time, wood_day_offset')
     if (msErr) {
       await supabase.from('products').delete().eq('id', product.id)
       throw new Error(`Creating machine steps: ${msErr.message}`)
@@ -242,6 +248,12 @@ export async function updateProductWithParts({
         alt_machine_names: cleanAlts,
         seconds_per_part: Number(s.seconds_per_part) || 0,
         setup_time: Number(s.setup_time) || 0,
+        // Wood conveyor v3: null = auto (compressed machine rank); a number pins
+        // this step to that day-offset. Only meaningful for wood steps.
+        wood_day_offset:
+          s.wood_day_offset != null && s.wood_day_offset !== ''
+            ? Number(s.wood_day_offset)
+            : null,
       })
     })
   })
@@ -251,7 +263,7 @@ export async function updateProductWithParts({
     const { data, error: msErr } = await supabase
       .from('machine_steps')
       .insert(stepRows)
-      .select('id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time')
+      .select('id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time, wood_day_offset')
     if (msErr) throw new Error(`Creating machine steps: ${msErr.message}`)
     insertedSteps = data || []
   }

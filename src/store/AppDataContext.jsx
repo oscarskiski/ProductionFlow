@@ -134,7 +134,7 @@ export function AppDataProvider({ children }) {
         loadAll('orders', ORDER_COLS),
         loadAll('products', 'id, code, description, "group", department, default_priority, folder_id, abbreviations, is_dispatch_only, wood_day_overrides'),
         loadAll('parts', 'id, product_id, name, qty_per_unit, length, width, thickness, material_code, part_priority, is_assembly, department'),
-        loadAll('machine_steps', 'id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time'),
+        loadAll('machine_steps', 'id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time, wood_day_offset'),
         loadAll('machines', '*'),
         loadAll('customers', 'id, code, name'),
         loadAll('employees', 'id, name, role, departments, pin'),
