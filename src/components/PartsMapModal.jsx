@@ -128,6 +128,7 @@ const styles = `
 .pm-step.teal { background: rgba(45,170,170,0.14); color: rgb(30,140,140); }
 .pm-step.muted { background: var(--surface); color: var(--ink-3); border: 1px solid var(--hairline); }
 .pm-step .secs { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pm-step .dayoff { font-weight: 800; font-variant-numeric: tabular-nums; padding: 1px 5px; border-radius: 5px; background: var(--green-soft); color: var(--green, #3a9d5a); letter-spacing: 0.02em; }
 .pm-route .arrow { color: var(--ink-3); }
 .pm-no-steps { font-size: 12px; color: var(--ink-3); font-style: italic; }
 .pm-no-product {
@@ -298,6 +299,9 @@ export default function PartsMapModal({ productCode, onClose }) {
                                     {s.machine_name}
                                     {s.seconds_per_part > 0 && <span className="secs">{s.seconds_per_part}s</span>}
                                     {s.setup_time > 0 && <span className="secs">+{s.setup_time}m SU</span>}
+                                    {s.wood_day_offset != null && machineByName?.get(s.machine_name)?.department === 'wood' && (
+                                      <span className="dayoff" title={`Pinned to conveyor day +${s.wood_day_offset}`}>d+{s.wood_day_offset}</span>
+                                    )}
                                   </span>
                                   {i < pt.steps.length - 1 && <ArrowRight size={11} className="arrow" />}
                                 </span>

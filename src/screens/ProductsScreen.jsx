@@ -286,7 +286,13 @@ html, body { margin:0; padding:0; min-height: 100vh; font-family: 'Inter', -appl
 
 /* Steps list inside a part — 3-column grid, each step a self-contained tile */
 .steps { margin-top: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding-left: 4px; }
-.step-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto; gap: 8px; align-items: start; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 12px; }
+.step-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto auto; gap: 8px; align-items: start; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 12px; }
+.step-row .day-pick { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; margin-top: 1px; }
+.step-row .day-pick .day-label { font-size: 8px; font-weight: 700; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
+.step-row .day-pick select { font: inherit; font-size: 11px; font-weight: 600; padding: 5px 6px; border-radius: 8px; border: 1px solid var(--hairline-2); background: var(--surface); color: var(--ink); outline: 0; cursor: pointer; }
+.step-row .day-pick select:focus { border-color: var(--green, #3a9d5a); box-shadow: 0 0 0 2px rgba(58,157,90,0.12); }
+.step-row .day-pick.pinned select { border-color: var(--green, #3a9d5a); color: var(--green, #3a9d5a); background: var(--green-soft); }
+.step-row .day-spacer { width: 1px; }
 .step-row .num { width: 20px; height: 20px; border-radius: 50%; background: var(--amber-soft); color: var(--amber); font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; margin-top: 4px; }
 .step-row .machines { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .step-row .machine-pick { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; align-items: center; }
@@ -651,7 +657,7 @@ function ProductCard({
 // ============================================================
 // Add New Product form
 // ============================================================
-const emptyStep = () => ({ machine_name: '', alt_machine_names: [], seconds_per_part: 0, setup_time: 0 })
+const emptyStep = () => ({ machine_name: '', alt_machine_names: [], seconds_per_part: 0, setup_time: 0, wood_day_offset: null })
 const emptyPart = (department = null) => ({
   name: '', qty_per_unit: 1, part_priority: 1, is_assembly: false, department, steps: [],
 })
@@ -677,6 +683,7 @@ export function productPartsToFormState(productId, partsByProduct, stepsByPart) 
       alt_machine_names: Array.isArray(s.alt_machine_names) ? [...s.alt_machine_names] : [],
       seconds_per_part: s.seconds_per_part ?? 0,
       setup_time: s.setup_time ?? 0,
+      wood_day_offset: s.wood_day_offset ?? null,
     })),
   }))
 }
@@ -899,6 +906,7 @@ function ProductForm({
       alt_machine_names: Array.isArray(s.alt_machine_names) ? [...s.alt_machine_names] : [],
       seconds_per_part: s.seconds_per_part ?? 0,
       setup_time: s.setup_time ?? 0,
+      wood_day_offset: s.wood_day_offset ?? null,
     })),
   })
 
@@ -1933,6 +1941,25 @@ function ProductForm({
                                   <Stepper compact jump value={s.seconds_per_part} onChange={(v) => updateStep(pi, si, { seconds_per_part: v })} />
                                   <span className="unit">s</span>
                                 </div>
+                                {machineByName?.get(s.machine_name)?.department === 'wood' ? (
+                                  <div
+                                    className={`day-pick ${s.wood_day_offset != null ? 'pinned' : ''}`}
+                                    title="Wood conveyor day for this step. Auto = the normal beat (one stage per day, compressed). Pin a number to run this step on that day-offset — give two steps the same number to run them the same day, or a lower number than the beat to jump a stage."
+                                  >
+                                    <span className="day-label">Day</span>
+                                    <select
+                                      value={s.wood_day_offset ?? ''}
+                                      onChange={(e) => updateStep(pi, si, { wood_day_offset: e.target.value === '' ? null : Number(e.target.value) })}
+                                    >
+                                      <option value="">Auto</option>
+                                      {[0, 1, 2, 3, 4, 5, 6, 7].map((d) => (
+                                        <option key={d} value={d}>{d}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ) : (
+                                  <span className="day-spacer" />
+                                )}
                                 <button type="button" className="row-x" onClick={() => removeStep(pi, si)} title="Remove step">
                                   <X size={14} />
                                 </button>
