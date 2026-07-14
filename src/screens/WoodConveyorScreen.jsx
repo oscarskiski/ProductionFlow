@@ -8,6 +8,7 @@ import { shiftForDate, effectiveShiftMinutes, timeToMin } from '../lib/scheduleE
 import {
   ChevronLeft, ChevronRight, AlertTriangle, Coffee, Filter, Check,
   Info, Trees, ArrowRight, CornerDownRight, ChevronsDown, ChevronsUp,
+  LayoutGrid, Route,
 } from 'lucide-react'
 
 // Read-only preview of the wood day-conveyor, laid out like the Steel Schedule:
@@ -180,6 +181,36 @@ html, body { margin:0; padding:0; min-height: 100vh; font-family: 'Inter', -appl
   .row { grid-template-columns: 24px 84px 1fr; }
   .row .ord-pri, .row .parts { display: none; }
 }
+
+/* Segmented view toggle */
+.seg { display: inline-flex; background: var(--surface); border: 1px solid var(--hairline-2); border-radius: 12px; padding: 3px; gap: 2px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(26,29,36,0.04); }
+.seg button { appearance: none; border: 0; background: transparent; font: inherit; font-size: 12px; font-weight: 600; color: var(--ink-2); padding: 7px 14px; border-radius: 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.seg button.active { background: var(--navy); color: white; }
+
+/* Per-job offset chip */
+.dayoff-chip { font-size: 9px; font-weight: 800; color: var(--green); background: var(--green-soft); padding: 1px 6px; border-radius: 5px; letter-spacing: 0.03em; flex-shrink: 0; }
+
+/* Orders route ribbon */
+.ribbon-order { background: var(--surface); border: 1px solid var(--hairline); border-radius: 16px; box-shadow: var(--shadow-card); padding: 14px 16px; margin-bottom: 10px; }
+.ribbon-order.over { border-color: rgba(210,83,58,0.4); box-shadow: 0 0 0 1px rgba(210,83,58,0.12), var(--shadow-card); }
+.ro-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.ro-head .ord { font-size: 15px; font-weight: 800; color: var(--navy); letter-spacing: -0.01em; }
+.ro-head .prod { font-size: 13px; font-weight: 600; color: var(--ink); }
+.ro-head .cust { font-size: 12px; color: var(--ink-3); }
+.ro-head .grow { flex: 1; }
+.ro-head .tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 3px 8px; border-radius: 6px; background: var(--surface-2); color: var(--ink-2); }
+.ro-head .tag.pull { background: var(--amber-soft); color: var(--amber); }
+.ro-head .tag.over { background: var(--red); color: white; }
+.ro-track { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; align-items: stretch; }
+.ro-day { min-width: 128px; flex-shrink: 0; border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface-2); padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+.ro-day.gap { background: transparent; border-style: dashed; opacity: 0.55; align-items: center; justify-content: center; min-width: 74px; }
+.ro-day .dh { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3); display: flex; justify-content: space-between; gap: 6px; margin-bottom: 1px; }
+.ro-day .dh .off { color: var(--green); }
+.ro-step { font-size: 11px; font-weight: 600; color: var(--ink); background: var(--surface); border: 1px solid var(--hairline); border-radius: 7px; padding: 4px 7px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ro-step .m { font-weight: 700; }
+.ro-step .u { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ro-step.asm { background: var(--blue-soft); border-color: transparent; color: var(--blue); }
+.ro-gap-label { font-size: 9px; color: var(--ink-3); font-style: italic; text-align: center; line-height: 1.3; }
 `
 
 // ---------- helpers ----------
@@ -235,7 +266,7 @@ function MachinesFilter({ machines, hidden, onToggle, onAll, onNone, jobCountByN
                 <div key={name} className={`pop-item ${checked ? 'checked' : ''}`} onClick={() => onToggle(name)}>
                   <span className="cbx">{checked && <Check size={12} strokeWidth={3} />}</span>
                   <span className="lbl">{name}</span>
-                  {dayByName.get(name) != null && <span className="daytag">D{dayByName.get(name)}</span>}
+                  {dayByName.get(name) != null && <span className="daytag" title="Route rank">R{dayByName.get(name)}</span>}
                   <span className="jobcount">{jobCountByName.get(name) || 0}</span>
                 </div>
               )
@@ -265,6 +296,7 @@ function JobRow({ job, sequence }) {
       <div className="info">
         <div className="part">
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{job.partName}</span>
+          {job.offset != null && <span className="dayoff-chip" title="This order's own day-offset — day 0 is its first day of production">day +{job.offset}</span>}
           {job.isAssembly && <span className="asm-tag" title="Assembly — waits for all other parts">ASM</span>}
         </div>
         <div className="meta">
@@ -295,7 +327,7 @@ function BreakRow({ startMin, endMin, label }) {
   )
 }
 
-function MachineCard({ machineName, color, day, dayPlan, open, onToggle }) {
+function MachineCard({ machineName, color, rank, dayPlan, open, onToggle }) {
   const jobs = dayPlan?.jobs || []
   const isIdle = jobs.length === 0
   const totalParts = jobs.reduce((s, j) => s + (j.units || 0), 0)
@@ -311,7 +343,7 @@ function MachineCard({ machineName, color, day, dayPlan, open, onToggle }) {
       <div className="mc-head" onClick={onToggle}>
         <ChevronRight size={16} className="chev" />
         <div className="name-block">
-          <span className="name">{machineName}{day != null && <span className="daytag">Day {day}</span>}</span>
+          <span className="name">{machineName}{rank != null && <span className="daytag" title="This machine's route rank (nominal stage). Jobs below show each order's own day-offset.">Rank {rank}</span>}</span>
           <span className="substats">
             {isIdle ? <span className="idle-tag">No work this day</span> : <>{jobs.length} job{jobs.length === 1 ? '' : 's'} · {totalParts} parts · {totalWorkMin} of {capacity} min</>}
           </span>
@@ -344,10 +376,71 @@ function MachineCard({ machineName, color, day, dayPlan, open, onToggle }) {
   )
 }
 
+// Per-order route ribbon: one card per order, a horizontal strip of its own
+// day 0…N. A skipped middle offset (a route "jump") shows as a dashed gap.
+function OrdersRibbon({ orders }) {
+  if (!orders || orders.length === 0) {
+    return <div className="state">No wood orders to route yet. Check that active orders have a ship/Due date and a wood route.</div>
+  }
+  const sorted = [...orders].sort((a, b) => (a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0))
+  return (
+    <div>
+      {sorted.map((o) => {
+        const byOff = new Map()
+        for (const r of o.route) {
+          if (!byOff.has(r.offset)) byOff.set(r.offset, [])
+          byOff.get(r.offset).push(r)
+        }
+        const maxOff = o.route.length ? Math.max(...o.route.map((r) => r.offset)) : 0
+        return (
+          <div key={o.orderId ?? o.ord_nr} className={`ribbon-order ${o.over ? 'over' : ''}`}>
+            <div className="ro-head">
+              <span className="ord">{o.ord_nr ? `#${o.ord_nr}` : '—'}</span>
+              <span className="prod">{o.productName}</span>
+              <span className="cust">{o.customerName || '—'} · {o.qty}×</span>
+              <span className="grow" />
+              <span className="tag">{o.leadDays}-day route</span>
+              {o.pulledDays > 0 && <span className="tag pull">Started {o.pulledDays}d early</span>}
+              {o.over && <span className="tag over">Over capacity</span>}
+            </div>
+            <div className="ro-track">
+              {Array.from({ length: maxOff + 1 }, (_, off) => {
+                const cells = byOff.get(off)
+                if (!cells) {
+                  return (
+                    <div key={off} className="ro-day gap">
+                      <span className="ro-gap-label">day +{off}<br />skipped</span>
+                    </div>
+                  )
+                }
+                const dd = strToDate(cells[0].dateStr)
+                return (
+                  <div key={off} className="ro-day">
+                    <div className="dh">
+                      <span>{DAY_NAMES[dd.getDay() - 1]} {dd.getDate()} {MON[dd.getMonth()]}</span>
+                      <span className="off">+{off}</span>
+                    </div>
+                    {cells.map((c, ci) => (
+                      <div key={ci} className={`ro-step ${c.isAssembly ? 'asm' : ''}`} title={`${c.machine} · ${c.partName} · ${c.units} parts`}>
+                        <span className="m">{c.machine}</span> <span className="u">· {c.units}</span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function WoodConveyorScreen() {
   const {
     orders, machines: allMachines, loading, error,
     productByCode, partsByProduct, stepsByPart, machineByName, customerByCode, holidaySet,
+    bufferDaysByDept,
   } = useAppData()
 
   const woodSetup = useMemo(() => {
@@ -363,9 +456,11 @@ export default function WoodConveyorScreen() {
   const result = useMemo(() => buildWoodConveyor({
     orders: activeOrders,
     productByCode, partsByProduct, stepsByPart, machineByName, customerByCode, holidaySet,
-  }), [activeOrders, productByCode, partsByProduct, stepsByPart, machineByName, customerByCode, holidaySet])
+    bufferDaysByDept,
+  }), [activeOrders, productByCode, partsByProduct, stepsByPart, machineByName, customerByCode, holidaySet, bufferDaysByDept])
 
   const weeks = result.weeks
+  const [view, setView] = useState('machines')
   const [weekIdx, setWeekIdx] = useState(0)
   const [dayIndex, setDayIndex] = useState(0)
   const [hidden, setHidden] = useState(new Set())
@@ -375,7 +470,7 @@ export default function WoodConveyorScreen() {
 
   const safeWeekIdx = Math.min(weekIdx, Math.max(0, weeks.length - 1))
   const week = weeks[safeWeekIdx] || null
-  const dateStr = week ? week.dates[dayIndex] : null
+  const dateStr = week ? week.dates[Math.min(dayIndex, week.dates.length - 1)] : null
 
   // Wood machines assigned to this day (for the "show idle" option) + those
   // that actually have work today.
@@ -394,17 +489,17 @@ export default function WoodConveyorScreen() {
       const plan = mach.days.get(dateStr)
       if (plan) { jobCount.set(name, plan.jobs.length); withWork.push({ name, mach, plan }) }
     }
-    // Machines belonging to this day but idle (only shown when toggle off).
+    // Wood machines with a rank but no work today (only shown when toggle off).
     const idleForDay = []
     for (const [name, wd] of dayByName) {
-      if (wd === dayIndex && !jobCount.has(name)) {
-        idleForDay.push({ name, mach: { color: (allMachines.find((x) => x.name === name)?.color) || '#9aa0ad', day: wd }, plan: null })
+      if (!jobCount.has(name)) {
+        idleForDay.push({ name, mach: { color: (allMachines.find((x) => x.name === name)?.color) || '#9aa0ad', rank: wd }, plan: null })
       }
     }
     let list = onlyWithWork ? withWork : [...withWork, ...idleForDay]
     list = list.filter((c) => !hidden.has(c.name))
     list.sort((a, b) => {
-      const ad = a.mach.day ?? 99, bd = b.mach.day ?? 99
+      const ad = a.mach.rank ?? 99, bd = b.mach.rank ?? 99
       if (ad !== bd) return ad - bd
       return a.name.localeCompare(b.name)
     })
@@ -455,24 +550,31 @@ export default function WoodConveyorScreen() {
           <div className="topbar">
             <div>
               <h1>Wood Conveyor</h1>
-              <div className="sub">Pick a production day (0–4) · each machine runs its set day</div>
+              <div className="sub">Each order starts on its own day 0 · staggered so machines aren't overloaded</div>
             </div>
             <div className="topbar-actions"><TopbarActions /></div>
           </div>
 
           <div className="preview-banner">
             <Info size={15} strokeWidth={2} className="ic" />
-            <span>Read-only preview. Work that doesn't fit a machine's day spills to the front of its next day. This does <b>not</b> change your live schedule.</span>
+            <span>Read-only preview. Starts are pulled earlier when a machine-day is full; work that still doesn't fit spills to the next day (shown "from prev day"). This does <b>not</b> change your live schedule.</span>
           </div>
 
           {loading && <div className="state">Loading…</div>}
           {error && <div className="state" style={{ color: 'var(--red)' }}>Failed to load: {error}</div>}
 
+          {!loading && !error && woodSetup.set > 0 && (
+            <div className="seg">
+              <button className={view === 'machines' ? 'active' : ''} onClick={() => setView('machines')}><LayoutGrid size={13} /> By machine / day</button>
+              <button className={view === 'orders' ? 'active' : ''} onClick={() => setView('orders')}><Route size={13} /> By order route</button>
+            </div>
+          )}
+
           {!loading && !error && woodSetup.set === 0 && (
             <div className="setup">
               <span className="badge"><Trees size={26} strokeWidth={1.8} className="ic" /></span>
               <h3>Set up the wood conveyor</h3>
-              <p>Each wood machine needs a day number — 0 = Monday (first day) through 4 = Friday (finishing) — before the preview can lay out the week.</p>
+              <p>Each wood machine needs a route rank — the order it comes in the flow (0 = first stage … higher = later). A product's route compresses the ranks it touches into day 0, +1, +2… Set ranks before the preview can lay out the conveyor.</p>
               <div className="prog">You've set <b>0</b> of {woodSetup.total} wood machines.</div>
               {result.unassigned.size > 0 && (
                 <div className="names">
@@ -484,27 +586,30 @@ export default function WoodConveyorScreen() {
             </div>
           )}
 
-          {!loading && !error && woodSetup.set > 0 && weeks.length === 0 && (
+          {!loading && !error && woodSetup.set > 0 && view === 'orders' && (
+            <OrdersRibbon orders={result.orders} />
+          )}
+
+          {!loading && !error && woodSetup.set > 0 && view === 'machines' && weeks.length === 0 && (
             <div className="state">
-              No wood orders land on the conveyor yet. Check that your active orders have a production week
-              (run Recalculate on the Import screen), and that the machines they use have a day set.
+              No wood orders land on the conveyor yet. Check that your active orders have a ship/Due date,
+              and that the machines they use have a route rank (Machines → Wood) or a per-step day in the parts map.
             </div>
           )}
 
-          {!loading && !error && woodSetup.set > 0 && weeks.length > 0 && week && (
+          {!loading && !error && woodSetup.set > 0 && view === 'machines' && weeks.length > 0 && week && (
             <>
               {/* Day strip */}
               <div className="day-strip">
                 <button className="nav" onClick={() => setWeekIdx((i) => Math.max(0, i - 1))} disabled={safeWeekIdx === 0} aria-label="Previous week"><ChevronLeft size={16} /></button>
                 <div className="week-pill"><span className="wk">WK</span><span className="wn">{week.week}</span></div>
-                {DAY_NAMES.map((nm, i) => {
-                  const d = week.dates[i]
+                {week.dates.map((d, i) => {
                   const dd = strToDate(d)
                   const isHol = holidaySet.has(d)
                   return (
-                    <button key={nm} className={`day-pill ${isHol ? 'holiday' : ''}`} aria-pressed={dayIndex === i} onClick={() => setDayIndex(i)}>
-                      <span className="dn">DAY {i}</span>
-                      <span className="dd">{DOW[dd.getDay()]} {dd.getDate()} {MON[dd.getMonth()]}</span>
+                    <button key={d} className={`day-pill ${isHol ? 'holiday' : ''}`} aria-pressed={Math.min(dayIndex, week.dates.length - 1) === i} onClick={() => setDayIndex(i)}>
+                      <span className="dn">{DAY_NAMES[dd.getDay() - 1]}</span>
+                      <span className="dd">{dd.getDate()} {MON[dd.getMonth()]}</span>
                       {isHol && <span className="dot" />}
                     </button>
                   )
@@ -555,7 +660,7 @@ export default function WoodConveyorScreen() {
                     key={c.name}
                     machineName={c.name}
                     color={c.mach.color}
-                    day={c.mach.day}
+                    rank={c.mach.rank}
                     dayPlan={c.plan ? { ...c.plan, _date: dateStr } : null}
                     open={openCards.has(c.name)}
                     onToggle={() => toggleCard(c.name)}

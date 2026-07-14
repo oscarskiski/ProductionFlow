@@ -134,7 +134,13 @@ export function AppDataProvider({ children }) {
         loadAll('orders', ORDER_COLS),
         loadAll('products', 'id, code, description, "group", department, default_priority, folder_id, abbreviations, is_dispatch_only, wood_day_overrides'),
         loadAll('parts', 'id, product_id, name, qty_per_unit, length, width, thickness, material_code, part_priority, is_assembly, department'),
-        loadAll('machine_steps', 'id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time, wood_day_offset'),
+        // wood_day_offset arrives with migration 024 — tolerate its absence so
+        // the app still loads (and saves) before that migration is run.
+        loadAll('machine_steps', 'id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time, wood_day_offset')
+          .catch((err) => {
+            console.warn('[AppDataContext] machine_steps.wood_day_offset missing (run migration 024?):', err.message)
+            return loadAll('machine_steps', 'id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time')
+          }),
         loadAll('machines', '*'),
         loadAll('customers', 'id, code, name'),
         loadAll('employees', 'id, name, role, departments, pin'),

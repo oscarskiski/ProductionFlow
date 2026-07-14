@@ -1,5 +1,20 @@
 import { supabase } from './supabase'
 
+const STEP_COLS = 'id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time, wood_day_offset'
+const STEP_COLS_LEGACY = 'id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time'
+
+// Insert machine_steps, tolerating a database that hasn't run migration 024 yet
+// (no wood_day_offset column). On that specific failure we strip the field and
+// retry so product saves keep working before the migration lands.
+async function insertMachineSteps(stepRows) {
+  let res = await supabase.from('machine_steps').insert(stepRows).select(STEP_COLS)
+  if (res.error && /wood_day_offset/.test(res.error.message || '')) {
+    const stripped = stepRows.map((r) => { const c = { ...r }; delete c.wood_day_offset; return c })
+    res = await supabase.from('machine_steps').insert(stripped).select(STEP_COLS_LEGACY)
+  }
+  return res
+}
+
 // createProductWithParts({ ... }) — single entry point used by the Products
 // screen's "Add New Product" form. Inserts a products row, then its parts,
 // then a flat list of machine_steps keyed by part. If parts/steps fail we
@@ -134,10 +149,7 @@ export async function createProductWithParts({
 
   let insertedSteps = []
   if (stepRows.length > 0) {
-    const { data, error: msErr } = await supabase
-      .from('machine_steps')
-      .insert(stepRows)
-      .select('id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time, wood_day_offset')
+    const { data, error: msErr } = await insertMachineSteps(stepRows)
     if (msErr) {
       await supabase.from('products').delete().eq('id', product.id)
       throw new Error(`Creating machine steps: ${msErr.message}`)
@@ -260,10 +272,7 @@ export async function updateProductWithParts({
 
   let insertedSteps = []
   if (stepRows.length > 0) {
-    const { data, error: msErr } = await supabase
-      .from('machine_steps')
-      .insert(stepRows)
-      .select('id, part_id, sequence, machine_name, alt_machine_names, seconds_per_part, setup_time, wood_day_offset')
+    const { data, error: msErr } = await insertMachineSteps(stepRows)
     if (msErr) throw new Error(`Creating machine steps: ${msErr.message}`)
     insertedSteps = data || []
   }
