@@ -8,13 +8,15 @@ import { isoWeekDayToDate, isoWeek } from '../lib/scheduling'
 import {
   buildScheduleRows, writeScheduleRows, cleanupOrphanScheduleRows,
   shiftForDate, workDatesOfWeek, timeToMin, effectiveShiftMinutes,
+  comparePriority,
 } from '../lib/scheduleEngine'
 import { setScheduleRowStatus } from '../lib/scheduleStatus'
+import { setOrderRanks } from '../lib/priority'
 import { cleanupDoneStepPhantoms } from '../lib/tracking'
 import { supabase } from '../lib/supabase'
 import {
   Hammer, Scissors, Activity, Truck, Grid, ChevronLeft, ChevronRight,
-  Zap, AlertTriangle, Play, Pause, Square, GripVertical, Coffee,
+  Zap, AlertTriangle, Play, Pause, Square, ChevronUp, ChevronDown, Coffee,
   ChevronsDown, ChevronsUp, Clock, Filter, Check, Printer,
 } from 'lucide-react'
 
@@ -33,6 +35,8 @@ const DEPT_TABS = [
 ]
 
 const DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI']
+// Stable empty map for the pending-reorder state (avoids new refs each render).
+const EMPTY_PENDING = new Map()
 
 // Department → header tint for the machine card title. Matches the rest of
 // the app's iOS-inspired palette.
@@ -219,11 +223,19 @@ html, body { margin:0; padding:0; min-height: 100vh; font-family: 'Inter', -appl
 .empty-row { padding: 18px 22px; font-size: 12px; color: var(--ink-3); font-style: italic; }
 
 /* Rows inside machine card ──────────────────────────────── */
-.row { display: grid; grid-template-columns: 22px 24px 92px 84px 1fr auto auto; gap: 14px; align-items: center; padding: 12px 18px 12px 22px; }
+.row { display: grid; grid-template-columns: 26px 24px 92px 84px 1fr auto auto; gap: 14px; align-items: center; padding: 12px 18px 12px 22px; }
 .row + .row { border-top: 1px solid var(--hairline); }
 .row:hover { background: var(--surface-2); }
-.row .drag { color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; cursor: grab; opacity: 0; transition: opacity 120ms; }
-.row:hover .drag { opacity: 1; }
+.row .reorder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.row .rbtn { width: 22px; height: 15px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--hairline); border-radius: 5px; background: var(--surface); color: var(--ink-3); cursor: pointer; transition: background 120ms, color 120ms, border-color 120ms; }
+.row .rbtn:hover:not(:disabled) { color: var(--navy); border-color: var(--navy); background: var(--amber-soft); }
+.row .rbtn:disabled { opacity: 0.4; cursor: default; }
+.row.pending { background: color-mix(in srgb, var(--amber) 6%, transparent); }
+.row.pending .when { opacity: 0.45; }
+.reorder-note { display: flex; align-items: center; gap: 6px; padding: 8px 22px; font-size: 11px; font-weight: 700; color: var(--amber); background: var(--amber-soft); text-transform: uppercase; letter-spacing: 0.04em; }
+.ibtn.primary.pending-pulse { position: relative; background: var(--amber); border-color: var(--amber); animation: pendingPulse 1.6s ease-in-out infinite; }
+.ibtn.primary .pending-dot { width: 7px; height: 7px; border-radius: 50%; background: #fff; margin-left: 2px; }
+@keyframes pendingPulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 55%, transparent); } 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--amber) 0%, transparent); } }
 .row .seq { width: 22px; height: 22px; border-radius: 6px; background: var(--amber-soft); color: var(--amber); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
 .row .when { font-size: 13px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.15; }
 .row .when .dash { color: var(--ink-3); margin: 0 2px; }
@@ -301,7 +313,8 @@ html, body { margin:0; padding:0; min-height: 100vh; font-family: 'Inter', -appl
   .mc-head .mini-progress { display: none; }
 
   .row { display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 7px; padding: 12px 14px; }
-  .row .drag { display: none; }
+  .row .reorder { order: 0; flex-direction: row; gap: 4px; }
+  .row .rbtn { width: 30px; height: 26px; }
   .row .seq { order: 1; }
   .row .when { order: 2; }
   .row .ord-pri { order: 3; }
@@ -705,7 +718,7 @@ function minLabel(m) {
   return `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`
 }
 
-function JobRow({ job, sequence, onAction, machine }) {
+function JobRow({ job, sequence, onAction, onReorder, canReorder, reordering, machine, pending }) {
   const startMin = timeToMin(fmtTime(job.start_time))
   const endMin = timeToMin(fmtTime(job.end_time))
   const dur = durationLabel(startMin, endMin)
@@ -759,8 +772,15 @@ function JobRow({ job, sequence, onAction, machine }) {
   }
 
   return (
-    <div className="row">
-      <span className="drag"><GripVertical size={14} /></span>
+    <div className={`row ${pending ? 'pending' : ''}`}>
+      {canReorder ? (
+        <span className="reorder">
+          <button type="button" className="rbtn" title="Move this order earlier (regenerate to apply)"
+            disabled={reordering} onClick={() => onReorder?.(job, 'up')}><ChevronUp size={13} /></button>
+          <button type="button" className="rbtn" title="Move this order later (regenerate to apply)"
+            disabled={reordering} onClick={() => onReorder?.(job, 'down')}><ChevronDown size={13} /></button>
+        </span>
+      ) : <span className="reorder" />}
       <span className="seq">{sequence}</span>
       <div className="when">
         {fmtTime(job.start_time)}<br/>
@@ -812,7 +832,7 @@ function JobRow({ job, sequence, onAction, machine }) {
   )
 }
 
-function MachineCard({ machine, jobs, shift, open, onToggle, onJobAction, nowMin, isToday }) {
+function MachineCard({ machine, jobs, shift, open, onToggle, onJobAction, onReorder, canReorder, reordering, pendingSeq, nowMin, isToday }) {
   const dept = machine.department
   const tint = DEPT_TINT[dept] || DEPT_TINT.steel
 
@@ -895,6 +915,23 @@ function MachineCard({ machine, jobs, shift, open, onToggle, onJobAction, nowMin
 
   const items = useMemo(() => buildTimeline(jobs, shift), [jobs, shift])
 
+  // Pending manual reorder for this machine: show the rows in the user's new
+  // order (grouped by order, original time-order within an order). Times are
+  // last-generated values and go stale until Regenerate — flagged in the UI.
+  const reorderedJobs = useMemo(() => {
+    if (!pendingSeq) return null
+    const byOrder = new Map()
+    for (const j of jobs) {
+      if (!byOrder.has(j.order_id)) byOrder.set(j.order_id, [])
+      byOrder.get(j.order_id).push(j)
+    }
+    const out = []
+    for (const oid of pendingSeq) { const g = byOrder.get(oid); if (g) out.push(...g) }
+    for (const j of jobs) if (!pendingSeq.includes(j.order_id)) out.push(j)
+    return out
+  }, [jobs, pendingSeq])
+  const isReordered = !!reorderedJobs
+
   const isIdle = jobs.length === 0
   return (
     <div
@@ -942,6 +979,15 @@ function MachineCard({ machine, jobs, shift, open, onToggle, onJobAction, nowMin
         <div className="mc-body">
           {jobs.length === 0 && items.length === 0 ? (
             <div className="empty-row">No work scheduled for this machine today.</div>
+          ) : isReordered ? (
+            <>
+              <div className="reorder-note">
+                <AlertTriangle size={12} /> New order — times &amp; breaks update when you Regenerate
+              </div>
+              {reorderedJobs.map((j, i) => (
+                <JobRow key={`j${j.id}`} job={j} sequence={i + 1} onAction={onJobAction} onReorder={onReorder} canReorder={canReorder} reordering={reordering} machine={machine} pending />
+              ))}
+            </>
           ) : (
             (() => {
               let seq = 0
@@ -949,7 +995,7 @@ function MachineCard({ machine, jobs, shift, open, onToggle, onJobAction, nowMin
                 if (it.type === 'job') {
                   seq++
                   return (
-                    <JobRow key={`j${it.data.id}`} job={it.data} sequence={seq} onAction={onJobAction} machine={machine} />
+                    <JobRow key={`j${it.data.id}`} job={it.data} sequence={seq} onAction={onJobAction} onReorder={onReorder} canReorder={canReorder} reordering={reordering} machine={machine} />
                   )
                 }
                 return <BreakRow key={`b${i}`} startMin={it.startMin} endMin={it.endMin} label={it.label} />
@@ -1147,7 +1193,7 @@ export default function ScheduleScreen() {
     enrichedOrders, machineByName,
     loading, error,
     applyScheduleRegenerate, applyScheduleByOrders, applyScheduleRowUpdate,
-    applyScheduleReschedule,
+    applyScheduleReschedule, applyOrderUpdate,
   } = useAppData()
   const canModify = canEdit()
 
@@ -1501,6 +1547,86 @@ export default function ScheduleScreen() {
     }
   }
 
+  // ----- Manual job ordering (held locally until Regenerate) ---------------
+  // The ▲/▼ arrows on each job row reorder that ORDER relative to its
+  // neighbours on the same machine. Moves are kept in local state (per
+  // machine) — NOT written to the DB per click — so you can stack up several
+  // moves and see them reorder immediately, then commit them ALL at once with
+  // Regenerate. Regenerate writes priority_rank and reschedules, so dependent
+  // parts/assemblies follow. Pending order is tied to the day on screen, so we
+  // drop it when you change day/week. Reset to pure urgency (CR) via the
+  // Priority screen's "Reset to CR".
+  // Pending order is scoped to the day+week on screen via viewKey — navigating
+  // away naturally discards it, so a stale reordering can never be committed to
+  // a different day (and no setState-in-effect needed to clear it).
+  const viewKey = `${year}-${week}-${selectedDate}`
+  const [pendingState, setPendingState] = useState({ key: null, map: EMPTY_PENDING })
+  const pendingByMachine = pendingState.key === viewKey ? pendingState.map : EMPTY_PENDING
+  const hasPending = pendingByMachine.size > 0
+
+  // Distinct order ids in a jobs list, first-seen order.
+  const distinctOrderIds = (list) => {
+    const seen = new Set(); const out = []
+    for (const j of list) if (j.order_id && !seen.has(j.order_id)) { seen.add(j.order_id); out.push(j.order_id) }
+    return out
+  }
+
+  const moveJobOrder = (job, dir) => {
+    if (!canModify || generating) return
+    const mid = job.machine_id
+    const baseSeq = pendingByMachine.get(mid) || distinctOrderIds(jobsByMachine.get(mid) || [])
+    const idx = baseSeq.indexOf(job.order_id)
+    if (idx < 0) return
+    const swap = dir === 'up' ? idx - 1 : idx + 1
+    if (swap < 0 || swap >= baseSeq.length) {
+      setGenMsg(dir === 'up' ? 'Already first on this machine.' : 'Already last on this machine.')
+      return
+    }
+    const next = [...baseSeq]
+    ;[next[idx], next[swap]] = [next[swap], next[idx]]
+    setPendingState((prev) => {
+      const base = prev.key === viewKey ? prev.map : new Map()
+      return { key: viewKey, map: new Map(base).set(mid, next) }
+    })
+    setGenMsg(null)
+  }
+
+  // Build the week's desired scheduling order: current priority order, with any
+  // pending per-machine reordering applied on top. Returns { sortedOrders,
+  // rankUpdates } where sortedOrders carry their new dense priority_rank.
+  const buildDesiredOrder = () => {
+    const weekOrders = [...(enrichedOrders || [])].filter((o) => o.prod_week === week && o.id)
+    const ids = weekOrders
+      .slice()
+      .sort((a, b) => {
+        const p = comparePriority(a, b)
+        if (p !== 0) return p
+        return (b.total_minutes || 0) - (a.total_minutes || 0)
+      })
+      .map((o) => o.id)
+    // Apply each machine's pending order: pull that machine's orders into the
+    // slots they already occupy, but in the user's arranged sequence.
+    for (const seq of pendingByMachine.values()) {
+      const inList = seq.filter((id) => ids.includes(id))
+      if (inList.length < 2) continue
+      const positions = []
+      ids.forEach((id, i) => { if (inList.includes(id)) positions.push(i) })
+      positions.forEach((pos, k) => { ids[pos] = inList[k] })
+    }
+    const rankOf = new Map(ids.map((id, i) => [id, i + 1]))
+    const byId = new Map(weekOrders.map((o) => [o.id, o]))
+    const curById = new Map(weekOrders.map((o) => [o.id, o.priority_rank ?? null]))
+    const rankUpdates = []
+    ids.forEach((id, i) => { if (curById.get(id) !== i + 1) rankUpdates.push({ id, priority_rank: i + 1 }) })
+    // Carry the fresh rank on each order object so the engine's tiebreak uses
+    // it immediately (applyOrderUpdate is async and wouldn't be visible here).
+    const sortedOrders = ids.map((id) => {
+      const o = byId.get(id)
+      return o ? { ...o, priority_rank: rankOf.get(id) } : null
+    }).filter(Boolean)
+    return { sortedOrders, rankUpdates }
+  }
+
   const handleGenerate = async () => {
     if (!canModify || generating) return
     setGenerating(true)
@@ -1512,20 +1638,45 @@ export default function ScheduleScreen() {
       const validStepIds = new Set((machineSteps || []).map((s) => s.id))
       const orphansRemoved = await cleanupOrphanScheduleRows({ validStepIds })
 
-      const sortedOrders = [...(enrichedOrders || [])]
-        .filter((o) => o.prod_week === week)
-        .sort((a, b) => {
-          const aCr = a.cr ?? Number.POSITIVE_INFINITY
-          const bCr = b.cr ?? Number.POSITIVE_INFINITY
-          if (aCr !== bCr) return aCr - bCr
-          return (b.total_minutes || 0) - (a.total_minutes || 0)
-        })
+      // Desired scheduling order = current priority order (priority_rank, then
+      // CR, then bottleneck minutes) with any pending ▲/▼ reordering applied.
+      // Rank only reorders sequence — the day an order starts is still fixed by
+      // its prod_day. Commit the pending reorder to priority_rank first so it
+      // survives future regenerates.
+      const { sortedOrders, rankUpdates } = buildDesiredOrder()
 
       if (sortedOrders.length === 0) {
         setGenMsg(`No orders found for week ${week}. Set prod_week from Priority screen first.`)
         return
       }
+      if (rankUpdates.length > 0) {
+        await setOrderRanks(rankUpdates)
+        for (const u of rankUpdates) applyOrderUpdate(u.id, { priority_rank: u.priority_rank })
+      }
+      setPendingState({ key: viewKey, map: EMPTY_PENDING })
       const ordersWithIds = sortedOrders.filter((o) => o.id)
+      const orderIds = ordersWithIds.map((o) => o.id)
+
+      // Completion-aware planning: sum units already produced per (order,
+      // step) from surviving schedule rows, so the engine skips finished work
+      // instead of re-planning full quantities on top of it (which buried
+      // ready assembly behind phantom fabrication and left machines idle).
+      // Read BEFORE writeScheduleRows deletes the queued rows — completed/
+      // working/paused rows survive and carry the qty_done we need.
+      const doneByOrderStep = new Map()
+      if (orderIds.length > 0) {
+        const { data: doneRows, error: doneErr } = await supabase
+          .from('schedule')
+          .select('order_id, machine_step_id, qty_done')
+          .in('order_id', orderIds)
+        if (doneErr) throw new Error(`Reading production progress: ${doneErr.message}`)
+        for (const r of (doneRows || [])) {
+          const qd = r.qty_done ?? 0
+          if (!r.order_id || !r.machine_step_id || qd <= 0) continue
+          const k = `${r.order_id}::${r.machine_step_id}`
+          doneByOrderStep.set(k, (doneByOrderStep.get(k) || 0) + qd)
+        }
+      }
 
       const { rows, summary } = buildScheduleRows({
         weekNumber: week, year,
@@ -1535,9 +1686,8 @@ export default function ScheduleScreen() {
         productByCode,
         machineByName,
         holidaySet: holidaySet || new Set(),
+        doneByOrderStep,
       })
-
-      const orderIds = ordersWithIds.map((o) => o.id)
       const { inserted, rows: insertedRows } = await writeScheduleRows({ orderIds, rows })
       applyScheduleByOrders(orderIds, insertedRows)
       setOverflowMachineIds(new Set(summary.overflowedMachineIds))
@@ -1595,8 +1745,9 @@ export default function ScheduleScreen() {
                 onPrint={handlePrint}
               />
               {canModify && (
-                <button className="ibtn primary" onClick={handleGenerate} disabled={generating}>
-                  <Zap size={13} className="ic" /> {generating ? 'Generating…' : 'Regenerate'}
+                <button className={`ibtn primary ${hasPending ? 'pending-pulse' : ''}`} onClick={handleGenerate} disabled={generating}>
+                  <Zap size={13} className="ic" /> {generating ? 'Generating…' : hasPending ? 'Regenerate to apply' : 'Regenerate'}
+                  {hasPending && <span className="pending-dot" />}
                 </button>
               )}
             </div>
@@ -1705,6 +1856,10 @@ export default function ScheduleScreen() {
                   open={openMachines.has(m.id)}
                   onToggle={() => toggleMachine(m.id)}
                   onJobAction={handleJobAction}
+                  onReorder={moveJobOrder}
+                  canReorder={canModify}
+                  reordering={generating}
+                  pendingSeq={pendingByMachine.get(m.id) || null}
                   nowMin={nowTick}
                   isToday={isToday}
                 />

@@ -11,7 +11,9 @@ import { isoWeekDayToDate } from './scheduling'
 // includes_setup).
 //
 // Algorithm (per spec):
-//   1. Sort orders by CR ascending (most urgent first).
+//   1. Sort orders by manual priority_rank (drag order) first, then CR
+//      ascending (most urgent first). Units already produced on the floor
+//      are skipped — see doneByOrderStep / placeOneStep.
 //   2. For each order, non-assembly parts START in parallel on prod_day at
 //      shift start. Within a part, steps run sequentially — step n+1 cannot
 //      start before step n's end_time on its machine.
@@ -41,6 +43,46 @@ import { isoWeekDayToDate } from './scheduling'
 // manual carry). Flat constant across all machines for now — refine to per-
 // machine if shops with very different layouts need it later.
 const INTER_STEP_TRAVEL_MIN = 3
+
+// ---------- lot streaming (transfer batches) ----------
+// Large part quantities are split into smaller sub-batches that flow through
+// the routing INDEPENDENTLY, so a downstream machine can start on the first
+// finished sub-batch instead of waiting for the WHOLE quantity to clear the
+// previous step. That's what keeps machines fed ("constant flow") — otherwise
+// e.g. Tube Laser (leg step 3) sits idle until all 200 legs clear step 2.
+//
+// This does NOT multiply setup: setup is charged once per (product, machine,
+// day) via machineState.productsSetup, so a part's sub-batches that land on
+// the same machine the same day set up only once.
+//
+// Sizing: aim each sub-batch's SLOWEST step at ~SUBBATCH_TARGET_MIN minutes,
+// capped at MAX_SUBBATCHES pieces so row counts stay sane. Small/fast parts
+// stay a single batch. Exported for tests.
+const SUBBATCH_TARGET_MIN = 50
+const MAX_SUBBATCHES = 5
+
+export function computeSubBatches(totalUnits, steps) {
+  const units = Math.max(0, Math.floor(totalUnits || 0))
+  if (units <= 1) return [{ unitStart: 0, size: units }]
+  const maxSecs = (steps || []).reduce((m, s) => Math.max(m, s.seconds_per_part || 0), 0)
+  if (maxSecs <= 0) return [{ unitStart: 0, size: units }]
+  const targetUnits = Math.max(1, Math.floor((SUBBATCH_TARGET_MIN * 60) / maxSecs))
+  let n = Math.ceil(units / targetUnits)
+  n = Math.max(1, Math.min(MAX_SUBBATCHES, n))
+  if (n <= 1) return [{ unitStart: 0, size: units }]
+  const base = Math.floor(units / n)
+  let rem = units - base * n
+  const out = []
+  let start = 0
+  for (let i = 0; i < n; i++) {
+    const size = base + (rem > 0 ? 1 : 0)
+    if (rem > 0) rem--
+    if (size <= 0) continue
+    out.push({ unitStart: start, size })
+    start += size
+  }
+  return out
+}
 
 const SHIFT_MON_THU = {
   start: '07:00',
@@ -135,6 +177,25 @@ export function workDatesOfWeek(weekNumber, year, holidaySet) {
     if (isWorkDay(d, holidaySet)) out.push(dateToStr(d))
   }
   return out
+}
+
+// Order sequencing comparator, shared by the ready-time queue tiebreak and
+// the Schedule screen's pre-sort. When two work items are ready at the SAME
+// moment, this decides which runs first: a manual priority_rank (set by
+// dragging on the Priority screen) wins — lower rank first, unranked last —
+// otherwise fall back to CR (lower = more urgent). It only reorders items
+// within the same moment; it never changes which DAY an order lands on (that
+// is fixed by the order's prod_day). Returns <0 if a should run before b.
+export function comparePriority(a, b) {
+  const aR = a?.priority_rank
+  const bR = b?.priority_rank
+  if (aR != null && bR != null) { if (aR !== bR) return aR - bR }
+  else if (aR != null) return -1
+  else if (bR != null) return 1
+  const aCR = (a?.cr != null && Number.isFinite(a.cr)) ? a.cr : Number.POSITIVE_INFINITY
+  const bCR = (b?.cr != null && Number.isFinite(b.cr)) ? b.cr : Number.POSITIVE_INFINITY
+  if (aCR === bCR) return 0 // equal (incl. both unscheduled) — avoid Infinity−Infinity = NaN
+  return aCR - bCR
 }
 
 // ---------- slot allocator ----------
@@ -314,6 +375,7 @@ export function buildScheduleRows({
   productByCode,         // Map<code, product>
   machineByName,         // Map<name, { id, name, department }>
   holidaySet,
+  doneByOrderStep = new Map(), // Map<`${order_id}::${machine_step_id}`, units already produced>
 }) {
   const rows = []
   const skipped = { noProdDay: 0, noProduct: 0, noParts: 0, noSteps: 0, noMachine: 0 }
@@ -332,7 +394,13 @@ export function buildScheduleRows({
     let perDate = machineState.get(machineId)
     if (!perDate) { perDate = new Map(); machineState.set(machineId, perDate) }
     let st = perDate.get(dateStr)
-    if (!st) { st = { usedTillMin: 0, lastProductCode: null, count: 0 }; perDate.set(dateStr, st) }
+    // productsSetup: set of product codes already set up on this machine this
+    // day. Setup is charged the FIRST time a product runs on the machine that
+    // day and skipped thereafter — even if other products run in between — so
+    // lot-streamed sub-batches don't re-pay setup. (Matches the documented
+    // "once per product/machine/day" rule; the old code only skipped it for
+    // strictly back-to-back jobs.)
+    if (!st) { st = { usedTillMin: 0, lastProductCode: null, count: 0, productsSetup: new Set() }; perDate.set(dateStr, st) }
     return st
   }
 
@@ -382,15 +450,23 @@ export function buildScheduleRows({
         `[Schedule] ${order.kwitasie_nr || order.id} · ${part.name}${part.is_assembly ? ' (ASM)' : ''}: ` +
         steps.map((s) => `${s.sequence}.${s.machine_name}(${s.seconds_per_part}s)`).join(' → '),
       )
-      const item = {
-        order, part, steps, stepIdx: 0,
-        totalUnits: (order.qty ?? 0) * (part.qty_per_unit ?? 1),
-        readyDateStr: prodDateStr,
-        readyMin: prodShiftStart,
-        placedAny: false,
+      // Lot streaming: split this part's total quantity into sub-batches that
+      // flow through the routing independently. Each carries its unit offset
+      // (unitStart) so completion accounting can tell which units it covers.
+      const partTotalUnits = (order.qty ?? 0) * (part.qty_per_unit ?? 1)
+      for (const sb of computeSubBatches(partTotalUnits, steps)) {
+        if (sb.size <= 0) continue
+        const item = {
+          order, part, steps, stepIdx: 0,
+          unitStart: sb.unitStart,
+          totalUnits: sb.size,
+          readyDateStr: prodDateStr,
+          readyMin: prodShiftStart,
+          placedAny: false,
+        }
+        if (part.is_assembly) assemblyItems.push(item)
+        else { nonAssemblyItems.push(item); queue.push(item) }
       }
-      if (part.is_assembly) assemblyItems.push(item)
-      else { nonAssemblyItems.push(item); queue.push(item) }
     }
 
     orderAssemblyInfo.set(order.id, {
@@ -417,6 +493,22 @@ export function buildScheduleRows({
   // day's portion, so a split that crosses two days incurs setup twice.
   const placeOneStep = (item) => {
     const step = item.steps[item.stepIdx]
+    // Completion-aware planning: how many units of THIS (order, step) are
+    // already produced on the floor (surviving completed/working/paused
+    // rows). A fully-done step consumes no machine time and emits no rows —
+    // we skip it entirely (return null → drain loop advances stepIdx without
+    // charging time), so the engine stops re-planning finished fabrication
+    // and burying the ready assembly behind it. A partially-done step only
+    // plans its leftover units. Skip early, before claiming a jig for work
+    // that won't be placed.
+    // Units already produced for this (order, step). The first `stepDone` units
+    // of the part are the finished ones, so this sub-batch's finished share is
+    // the overlap of [unitStart, unitStart+size) with [0, stepDone).
+    const stepDone = doneByOrderStep.get(`${item.order.id}::${step.id}`) || 0
+    const size = item.totalUnits ?? 0
+    const doneInBatch = Math.max(0, Math.min(size, stepDone - (item.unitStart || 0)))
+    const stepRemaining = size - doneInBatch
+    if (stepRemaining <= 0) return null
     // Resolve the pool — primary + alts. Defensive: drop blanks, dedup, drop
     // names that don't resolve to a real machine, drop inactive machines.
     // The picker below scores each pool member by current queue load and
@@ -470,7 +562,7 @@ export function buildScheduleRows({
     for (const m of candidates) {
       const s = getState(m.id, targetDateStr)
       const score = s.usedTillMin
-      const sameProduct = s.lastProductCode === item.order.product_code
+      const sameProduct = s.productsSetup.has(item.order.product_code)
       if (score < pickedScore) {
         pickedMachine = m
         pickedScore = score
@@ -499,7 +591,8 @@ export function buildScheduleRows({
     }
     const secsPerUnit = step.seconds_per_part ?? 0
     if (secsPerUnit <= 0) return null
-    let remainingUnits = item.totalUnits
+    // Only the leftover (not-yet-produced) units need machine time.
+    let remainingUnits = stepRemaining
     if (remainingUnits <= 0) return null
 
     let dateCursor = strToDate(item.readyDateStr)
@@ -512,15 +605,15 @@ export function buildScheduleRows({
       const dateStr = dateToStr(dateCursor)
       const shift = shiftForDate(dateCursor)
       const state = getState(machine.id, dateStr)
-      const sameProduct = state.lastProductCode === item.order.product_code
       // Setup time: prefer the step's setup_time when it's been set (legacy
       // CSV import path used to populate this), otherwise fall back to the
       // machine's setup_time_min (the new per-machine model the user now
-      // edits via the Machines screen). Same product back-to-back skips it.
+      // edits via the Machines screen). Charged once per product per machine
+      // per day — skipped if this product was already set up here today.
       const baseSetup = (step.setup_time && step.setup_time > 0)
         ? step.setup_time
         : (machine.setup_time_min || 0)
-      const setupMin = sameProduct ? 0 : baseSetup
+      const setupMin = state.productsSetup.has(item.order.product_code) ? 0 : baseSetup
 
       const { segments, unitsPlaced } = placeUnitsOnDay({
         shift,
@@ -535,6 +628,7 @@ export function buildScheduleRows({
         for (const seg of segments) {
           state.usedTillMin = seg.endMin
           state.lastProductCode = item.order.product_code
+          state.productsSetup.add(item.order.product_code)
           state.count++
           rows.push({
             order_id: item.order.id,
@@ -598,9 +692,9 @@ export function buildScheduleRows({
       if (a.readyDateStr > b.readyDateStr) continue
       if (a.readyMin < b.readyMin) { bestIdx = i; continue }
       if (a.readyMin > b.readyMin) continue
-      const aCR = a.order.cr ?? Number.POSITIVE_INFINITY
-      const bCR = b.order.cr ?? Number.POSITIVE_INFINITY
-      if (aCR < bCR) bestIdx = i
+      // Ready at the same moment — break the tie by manual priority_rank
+      // (drag order), then CR. Doesn't move anything to a different day.
+      if (comparePriority(a.order, b.order) < 0) bestIdx = i
     }
     const item = queue[bestIdx]
     const result = placeOneStep(item)
