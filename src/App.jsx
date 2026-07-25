@@ -3,7 +3,9 @@ import LoginScreen from './screens/LoginScreen'
 import DashboardScreen from './screens/DashboardScreen'
 import PriorityScreen from './screens/PriorityScreen'
 import ScheduleScreen from './screens/ScheduleScreen'
-import WoodConveyorScreen from './screens/WoodConveyorScreen'
+import ConstraintScreen from './screens/ConstraintScreen'
+// Wood Conveyor hidden 2026-07-16 — re-enable by uncommenting this import + its route below
+// import WoodConveyorScreen from './screens/WoodConveyorScreen'
 import WeekPlanScreen from './screens/WeekPlanScreen'
 import DispatchScreen from './screens/DispatchScreen'
 import TrackingScreen from './screens/TrackingScreen'
@@ -16,6 +18,7 @@ import ImportScreen from './screens/ImportScreen'
 import ReconcileScreen from './screens/ReconcileScreen'
 import MESStationScreen from './screens/MESStationScreen'
 import RoleGate from './components/RoleGate'
+import DailyCheckModal from './components/DailyCheckModal'
 import { MessagesProvider } from './store/MessagesContext'
 
 function App() {
@@ -27,11 +30,13 @@ function App() {
         <Route path="/dashboard" element={<DashboardScreen />} />
         <Route path="/priority" element={<PriorityScreen />} />
         <Route path="/schedule" element={<ScheduleScreen />} />
+        <Route path="/constraint" element={<ConstraintScreen />} />
+        {/* Wood Conveyor hidden 2026-07-16 — re-enable by uncommenting (screen code still intact)
         <Route path="/wood-conveyor" element={
           <RoleGate allow={['Boss', 'Manager']}>
             <WoodConveyorScreen />
           </RoleGate>
-        } />
+        } /> */}
         <Route path="/week" element={<WeekPlanScreen />} />
         <Route path="/dispatch" element={<DispatchScreen />} />
         <Route path="/tracking" element={<TrackingScreen />} />
@@ -73,6 +78,7 @@ function App() {
         <Route path="/mes-station" element={<MESStationScreen />} />
         <Route path="/" element={<Navigate to="/login" replace />} />
       </Routes>
+      <DailyCheckModal />
       </MessagesProvider>
     </div>
   )

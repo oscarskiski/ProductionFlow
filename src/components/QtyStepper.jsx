@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react'
 import { Minus, Plus } from 'lucide-react'
 
 // Pill-style ± quantity stepper used by Tracking, MES Complete-Step, and the
@@ -112,4 +113,43 @@ export default function QtyStepper({
       {showMax && max != null && <span className="of">/ {max}</span>}
     </div>
   )
+}
+
+// Same pill, but the number updates INSTANTLY on each click while the expensive
+// parent update (global cache patch + Supabase write) is debounced — so holding
+// down +10/−10 doesn't lag or bounce as the whole tracking list re-renders on
+// every tap. Adopts external changes (MES, reschedule) only when not mid-edit,
+// and flushes any pending tick on unmount so a quick change is never lost.
+export function DebouncedQtyStepper({ value, onChange, delay = 300, ...rest }) {
+  const [local, setLocal] = useState(value)
+  const timer = useRef(null)
+  const dirty = useRef(false)
+  const pending = useRef(value)
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+
+  useEffect(() => {
+    if (!dirty.current) setLocal(value)
+  }, [value])
+
+  useEffect(() => () => {
+    if (timer.current) {
+      clearTimeout(timer.current)
+      if (dirty.current) onChangeRef.current(pending.current)
+    }
+  }, [])
+
+  const handle = (v) => {
+    setLocal(v)
+    pending.current = v
+    dirty.current = true
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      timer.current = null
+      dirty.current = false
+      onChangeRef.current(v)
+    }, delay)
+  }
+
+  return <QtyStepper value={local} onChange={handle} {...rest} />
 }

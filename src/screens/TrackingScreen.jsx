@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import TopbarActions from '../components/TopbarActions'
 import Sidebar from '../components/Sidebar'
-import QtyStepper from '../components/QtyStepper'
+import { DebouncedQtyStepper } from '../components/QtyStepper'
 import { useAppData } from '../store/AppDataContext'
 import {
   buildOrderTracking, distributeQtyAcrossRows, setStepQtyDone,
@@ -13,8 +13,26 @@ import { isoWeek, isoWeekDayToDate } from '../lib/scheduling'
 import {
   Hammer, Scissors, Activity, Truck, Grid, Search,
   ChevronRight, ChevronLeft, ChevronDown, Expand, Check, Minus, X, CalendarPlus, PackageCheck,
-  CalendarDays,
+  CalendarDays, AlertTriangle, ClipboardCheck,
 } from 'lucide-react'
+import { computeSlip } from '../lib/slip'
+
+// Has any real production happened on this order yet? Moving UNSTARTED work
+// around is just planning and must NOT flag the order as "behind" — only once a
+// step has been ticked / run on MES does a reschedule count as slippage.
+function orderHasStarted(tracking) {
+  if (!tracking) return false
+  if (tracking.doneUnits > 0) return true
+  for (const pt of tracking.parts) {
+    for (const sv of pt.steps) {
+      if (sv.qty_done > 0) return true
+      for (const r of sv.rows) {
+        if (r.status === 'working' || r.status === 'completed' || r.started_at) return true
+      }
+    }
+  }
+  return false
+}
 
 const DEFAULT_RESCHEDULE_QUICK = [
   { id: 'today', label: 'Today', dayOffset: 0 },
@@ -129,6 +147,8 @@ html, body {
 .ord-head .info .ord-num { font-size: 13px; font-weight: 700; color: var(--ink-3); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
 .ord-head .info .name { font-size: 17px; font-weight: 600; color: var(--ink); letter-spacing: -0.015em; }
 .wk-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--blue-soft); color: var(--blue); font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; letter-spacing: 0.02em; }
+.ord-card.slipping { border-left: 3px solid var(--red); }
+.slip-badge { display: inline-flex; align-items: center; gap: 4px; background: var(--red-soft); color: var(--red); font-size: 11px; font-weight: 800; padding: 3px 9px; border-radius: 999px; letter-spacing: 0.01em; white-space: nowrap; }
 .wk-chip.late { background: var(--red-soft); color: var(--red); }
 .wk-chip.next { background: var(--green-soft); color: var(--green); }
 .ord-head .info .meta { margin-top: 4px; font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -334,7 +354,7 @@ function MachStepRow({ stepView, onStepperChange }) {
         )}
       </div>
       {hasRows ? (
-        <QtyStepper
+        <DebouncedQtyStepper
           value={stepView.qty_done}
           max={stepView.qty}
           onChange={(v) => onStepperChange(stepView, v)}
@@ -389,7 +409,7 @@ function PartRow({ partView, index, defaultOpen, onStepperChange }) {
 }
 
 function OrderCard({
-  tracking, order, defaultOpen, currentWeek, leftoverSteps,
+  tracking, order, slip, defaultOpen, currentWeek, leftoverSteps,
   productionComplete, markReadySaving,
   onStepperChange, onOpenReschedule, onMarkReady,
 }) {
@@ -407,9 +427,12 @@ function OrderCard({
     ? `Wk${order.prod_week}/D${order.prod_day}`
     : 'Unscheduled'
   const leftoverCount = leftoverSteps.reduce((s, x) => s + (x.stepView.qty - x.stepView.qty_done), 0)
+  const daysBehind = slip?.daysBehind || 0
+  const pushed = slip?.count || 0
+  const isSlipping = daysBehind > 0 || pushed > 0
 
   return (
-    <div className={`ord-card ${open ? 'expanded' : ''}`}>
+    <div className={`ord-card ${open ? 'expanded' : ''} ${isSlipping ? 'slipping' : ''}`}>
       <div className="ord-head" onClick={() => setOpen((v) => !v)}>
         <div className={`pri p${pri}`}>{pri}</div>
         <div className="info">
@@ -420,6 +443,17 @@ function OrderCard({
               <DeptIcon size={11} strokeWidth={1.8} />
               {wkLabel}
             </span>
+            {isSlipping && (
+              <span
+                className="slip-badge"
+                title={`Originally planned Wk${slip.baselineWeek}/D${slip.baselineDay} — rescheduled ${pushed}× since production started.`}
+              >
+                <AlertTriangle size={11} strokeWidth={2.4} />
+                {daysBehind > 0
+                  ? `${daysBehind} work-day${daysBehind === 1 ? '' : 's'} behind · pushed ${pushed}×`
+                  : `pushed ${pushed}× · behind plan`}
+              </span>
+            )}
             <span className="cust">· {order.customer_name}</span>
             {productionComplete && (
               <span className="prod-done-chip" title="Every machine step is complete">
@@ -441,7 +475,7 @@ function OrderCard({
             <button
               type="button"
               className="resched-pill"
-              onClick={(e) => { e.stopPropagation(); onOpenReschedule({ order, leftoverSteps }) }}
+              onClick={(e) => { e.stopPropagation(); onOpenReschedule({ order, leftoverSteps, hasStarted: orderHasStarted(tracking) }) }}
               title="Move unfinished steps to another date"
             >
               <CalendarPlus size={11} strokeWidth={2} />
@@ -788,14 +822,14 @@ export default function TrackingScreen() {
         const tracking = buildOrderTracking({
           order: o, parts, stepsByPart, scheduleByOrderStep, machineById,
         })
-        return { order: o, tracking }
+        return { order: o, tracking, slip: computeSlip(o, holidaySet, prodYear) }
       })
       .sort((a, b) => {
         const aCr = a.order.cr ?? Infinity
         const bCr = b.order.cr ?? Infinity
         return aCr - bCr
       })
-  }, [baseFiltered, prodDate, prodYear, productByCode, partsByProduct, stepsByPart, scheduleByOrderStep])
+  }, [baseFiltered, prodDate, prodYear, productByCode, partsByProduct, stepsByPart, scheduleByOrderStep, holidaySet])
 
   const stats = useMemo(() => {
     const ordersActive = visible.length
@@ -803,7 +837,8 @@ export default function TrackingScreen() {
     let stepsDone = 0
     let completedToday = 0
     let behind = 0
-    for (const { order, tracking } of visible) {
+    let daysBehindTotal = 0
+    for (const { tracking, slip } of visible) {
       for (const pt of tracking.parts) {
         for (const s of pt.steps) {
           stepsTotal += 1
@@ -815,9 +850,12 @@ export default function TrackingScreen() {
           }
         }
       }
-      if (order.cr_band === 'overdue' || order.cr_band === 'urgent') behind += 1
+      // "Behind" now means the order has been pushed off its ORIGINAL plan and
+      // hasn't caught back up — this survives the nightly reschedule instead of
+      // resetting to 0 like the old cr_band count did.
+      if (slip.count > 0 || slip.daysBehind > 0) { behind += 1; daysBehindTotal += slip.daysBehind }
     }
-    return { ordersActive, stepsTotal, stepsDone, completedToday, behind }
+    return { ordersActive, stepsTotal, stepsDone, completedToday, behind, daysBehindTotal }
   }, [visible, today])
 
   const expandAll = () => setExpandSignal({ all: true, at: Date.now() })
@@ -943,6 +981,12 @@ export default function TrackingScreen() {
       const unmapNote = unmappable.length > 0
         ? ` · ${unmappable.length} step(s) skipped: missing machine (${unmappable.map((u) => u.machine).join(', ')})`
         : ''
+      // Capacity warning: if the earliest the work could actually be slotted is
+      // LATER than the day you picked, the machine is full until then. The order's
+      // planned slot still honours your pick, but this tells you the truth.
+      const capacityNote = (dates[0] && dates[0] > dateStr)
+        ? ` · ⚠ machine full until ${dates[0]} — that's the earliest it can actually run`
+        : ''
       // Save the earliest landing date so Schedule auto-jumps to that day
       // on next visit. Cleared once consumed so it only fires once.
       if (dates[0]) {
@@ -952,21 +996,44 @@ export default function TrackingScreen() {
         // its original value across Dashboard / Priority / Week Plan while
         // the schedule rows are in a different week. Fire-and-forget;
         // failure here doesn't break the reschedule itself.
-        const d = new Date(dates[0] + 'T00:00:00')
+        // Anchor the order's new prod slot to the DATE THE BOSS PICKED, not to
+        // wherever the engine happened to land the earliest row. "Reschedule to
+        // today" must read as today (Wk/D of today) even if some steps roll to a
+        // later day because today is full.
+        const d = new Date(dateStr + 'T00:00:00')
         const newProdWeek = isoWeek(d)
         const dow = d.getDay() === 0 ? 7 : d.getDay()
         const newProdDay = dow > 5 ? null : dow
+        const ord = rescheduleCtx.order
+        const slipPatch = {
+          prod_week: newProdWeek,
+          prod_day: newProdDay,
+        }
+        // Slippage only counts once production has actually started. Rescheduling
+        // work that hasn't begun is just re-planning — no baseline, no count, no
+        // "behind" badge. But the moment a started order is pushed, freeze its
+        // current slot as the baseline (first time only) and count the push, so
+        // "days behind" measures real drift and grows with every later reschedule
+        // instead of resetting.
+        if (rescheduleCtx.hasStarted) {
+          slipPatch.reschedule_count = (ord.reschedule_count || 0) + 1
+          slipPatch.last_rescheduled_at = new Date().toISOString()
+          if (ord.baseline_prod_week == null && ord.prod_week != null) {
+            slipPatch.baseline_prod_week = ord.prod_week
+            slipPatch.baseline_prod_day = ord.prod_day
+          }
+        }
         try {
           const { data } = await supabase
             .from('orders')
-            .update({ prod_week: newProdWeek, prod_day: newProdDay })
-            .eq('id', rescheduleCtx.order.id)
-            .select('id, prod_week, prod_day')
+            .update(slipPatch)
+            .eq('id', ord.id)
+            .select('id, prod_week, prod_day, baseline_prod_week, baseline_prod_day, reschedule_count, last_rescheduled_at')
             .single()
-          if (data) applyOrderUpdate(rescheduleCtx.order.id, data)
+          if (data) applyOrderUpdate(ord.id, data)
         } catch (_) { /* swallow */ }
       }
-      setToastMsg(`Moved ${inserted.length} row(s) to ${dateNote}.${skipNote}${unmapNote}`)
+      setToastMsg(`Moved ${inserted.length} row(s) to ${dateNote}.${skipNote}${unmapNote}${capacityNote}`)
     }
   }
 
@@ -1028,6 +1095,7 @@ export default function TrackingScreen() {
               )}
             </div>
             <div style={{ flex: 1 }} />
+            <button className="ibtn" onClick={() => window.dispatchEvent(new Event('open-daily-check'))}><ClipboardCheck size={12} strokeWidth={1.8} className="ic" /> Daily check</button>
             <button className="ibtn" onClick={expandAll}><Expand size={12} strokeWidth={1.8} className="ic" /> Expand All</button>
             <button className="ibtn" onClick={collapseAll}><ChevronDown size={12} strokeWidth={1.8} className="ic" /> Collapse All</button>
           </div>
@@ -1051,7 +1119,9 @@ export default function TrackingScreen() {
             <div className="stat accent-red">
               <div className="l">Behind Schedule</div>
               <div className="v">{stats.behind}</div>
-              <div className="d">{stats.behind > 0 ? <span className="neg">overdue + urgent</span> : 'on track'}</div>
+              <div className="d">{stats.behind > 0
+                ? <span className="neg">{stats.daysBehindTotal} work-day{stats.daysBehindTotal === 1 ? '' : 's'} slipped total</span>
+                : 'on track'}</div>
             </div>
           </div>
 
@@ -1061,7 +1131,7 @@ export default function TrackingScreen() {
             </div>
           ) : (
             <div className="ord-list">
-              {visible.map(({ order, tracking }, i) => {
+              {visible.map(({ order, tracking, slip }, i) => {
                 const leftoverSteps = []
                 for (const pt of tracking.parts) {
                   for (const sv of pt.steps) {
@@ -1079,6 +1149,7 @@ export default function TrackingScreen() {
                     key={order.id}
                     order={order}
                     tracking={tracking}
+                    slip={slip}
                     defaultOpen={query.trim() ? true : (expandSignal.at ? expandSignal.all : i < 2)}
                     currentWeek={currentWeek}
                     leftoverSteps={leftoverSteps}
