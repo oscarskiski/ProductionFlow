@@ -5,6 +5,8 @@ import { crReason, dayLabel, formatCR, resetWeekRanks, setOrderRanks, sortByPrio
 import { isoWeek } from '../lib/scheduling'
 import { canEdit, getCurrentUser } from '../lib/auth'
 import NewOrderForm from '../components/NewOrderForm'
+import SplitOrderModal from '../components/SplitOrderModal'
+import { splitOrder } from '../lib/splitOrder'
 import PartsMapModal from '../components/PartsMapModal'
 import TopbarActions from '../components/TopbarActions'
 import { useConfirm } from '../components/ConfirmDialog'
@@ -59,6 +61,7 @@ import {
   FileText,
   File,
   X,
+  Split,
 } from 'lucide-react'
 
 const iconMap = {
@@ -90,6 +93,7 @@ const iconMap = {
   up: ChevronUp,
   arrow: ArrowRight,
   edit: Edit,
+  split: Split,
   dot: Dot,
   shield: Shield,
   logout: LogOut,
@@ -373,7 +377,7 @@ html, body {
 }
 `
 
-function PriRow({ rank, order, mayEdit, onEdit, onViewParts, activeDept, index, dragIndex, setDragIndex, dropIndex, setDropIndex, onMove, selectable, selected, onToggleSelect }) {
+function PriRow({ rank, order, mayEdit, onEdit, onSplit, onViewParts, activeDept, index, dragIndex, setDragIndex, dropIndex, setDropIndex, onMove, selectable, selected, onToggleSelect }) {
   const topClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : ''
   // Single CR source: always use the order's own CR. We used to overlay a
   // dept-track CR when on a specific dept tab, but it caused "row says
@@ -464,6 +468,19 @@ function PriRow({ rank, order, mayEdit, onEdit, onViewParts, activeDept, index, 
         <b>{formatCR(displayedCr)}</b><span>CR</span>
       </div>
       <div className="row-actions">
+        {order.batch_count > 1 && (
+          <span
+            title={`Batch ${order.batch_index} of ${order.batch_count}`}
+            style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.04em', padding: '2px 6px', borderRadius: 999, background: 'var(--navy-soft)', color: 'var(--navy)', whiteSpace: 'nowrap' }}
+          >
+            B{order.batch_index}/{order.batch_count}
+          </span>
+        )}
+        {mayEdit && order.qty > 1 && (
+          <button type="button" className="iconbtn" onClick={() => onSplit(order)} aria-label={`Split order ${order.ord_nr || order.kwitasie_nr || ''} into batches`} title="Split into batches">
+            <I n="split" s={14} />
+          </button>
+        )}
         {mayEdit && (
           <button type="button" className="iconbtn" onClick={() => onEdit(order)} aria-label={`Edit order ${order.ord_nr || order.kwitasie_nr || ''}`} title="Edit">
             <I n="edit" s={14} />
@@ -475,12 +492,19 @@ function PriRow({ rank, order, mayEdit, onEdit, onViewParts, activeDept, index, 
 }
 
 export default function PriorityScreen() {
-  const { enrichedOrders, loading, error, applyOrderUpdate, applyOrderInsert, applyOrdersDelete } = useAppData()
+  const {
+    enrichedOrders, loading, error, applyOrderUpdate, applyOrderInsert, applyOrdersDelete,
+    partsByProduct, stepsByPart, productByCode, machineByName, holidaySet, reload,
+  } = useAppData()
   const [dept, setDept] = useState('steel')
   const [week, setWeek] = useState(null) // null = will auto-select once weeks are known
   const [editingOrder, setEditingOrder] = useState(null)
   const [creatingNew, setCreatingNew] = useState(false)
   const [viewingPartsCode, setViewingPartsCode] = useState(null)
+  const [splittingOrder, setSplittingOrder] = useState(null)
+  const [splitSaving, setSplitSaving] = useState(false)
+  const [splitError, setSplitError] = useState(null)
+  const [splitMsg, setSplitMsg] = useState(null)
   const user = getCurrentUser()
   const mayEdit = canEdit(user?.role)
   const formOpen = creatingNew || !!editingOrder
@@ -492,6 +516,39 @@ export default function PriorityScreen() {
   const handleViewParts = (order) => {
     if (order?.product_code) setViewingPartsCode(order.product_code)
   }
+
+  const handleSplit = (order) => {
+    setSplitError(null)
+    setSplittingOrder(order)
+  }
+
+  const handleConfirmSplit = async (batches) => {
+    if (!splittingOrder) return
+    setSplitSaving(true)
+    setSplitError(null)
+    try {
+      const res = await splitOrder({
+        order: splittingOrder,
+        batches: batches.map((b) => ({ qty: Number(b.qty) || 0, startDate: b.startDate })),
+        maps: { partsByProduct, stepsByPart, productByCode, machineByName, holidaySet, year: new Date().getFullYear() },
+      })
+      // Multi-entity mutation (orders + tracks + schedule) — a full refresh is
+      // the safe, simple way to resync every cache at once.
+      await reload()
+      setSplittingOrder(null)
+      setSplitMsg(`Split into ${res.count} batches · ${res.scheduleInserted} schedule row(s) generated.`)
+    } catch (e) {
+      setSplitError(e.message || String(e))
+    } finally {
+      setSplitSaving(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!splitMsg) return undefined
+    const t = setTimeout(() => setSplitMsg(null), 5000)
+    return () => clearTimeout(t)
+  }, [splitMsg])
 
   const closeForm = () => {
     setEditingOrder(null)
@@ -777,6 +834,7 @@ export default function PriorityScreen() {
                   order={o}
                   mayEdit={mayEdit && !search.trim()}
                   onEdit={handleEdit}
+                  onSplit={handleSplit}
                   onViewParts={handleViewParts}
                   activeDept={DEPT_TAB_TO_DB[dept]}
                   dragIndex={dragIndex}
@@ -803,6 +861,23 @@ export default function PriorityScreen() {
           defaultDepartment={dept === 'uphol' ? 'upholstery' : dept === 'disp' ? 'dispatch' : (dept === 'all' ? 'steel' : dept)}
           editOrder={editingOrder}
         />
+      )}
+      {mayEdit && splittingOrder && (
+        <SplitOrderModal
+          order={splittingOrder}
+          saving={splitSaving}
+          error={splitError}
+          onClose={() => { if (!splitSaving) { setSplittingOrder(null); setSplitError(null) } }}
+          onConfirm={handleConfirmSplit}
+        />
+      )}
+      {splitMsg && (
+        <div
+          onClick={() => setSplitMsg(null)}
+          style={{ position: 'fixed', right: 18, bottom: 18, zIndex: 5000, background: 'var(--navy)', color: '#fff', padding: '12px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, boxShadow: '0 12px 30px rgba(0,0,0,0.25)', cursor: 'pointer', maxWidth: 360 }}
+        >
+          {splitMsg}
+        </div>
       )}
       <PartsMapModal
         productCode={viewingPartsCode}

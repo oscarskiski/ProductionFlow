@@ -18,7 +18,7 @@ import { crBand } from '../lib/priority'
 
 const AppDataContext = createContext(null)
 
-const ORDER_COLS = 'id, kwitasie_nr, qty, qty_done, status, product_code, customer_code, department, due_date, prod_week, prod_day, send_week, send_day, description, priority_rank, ord_nr, "group", wood_type, notes, needs_review, original_item_code, ready_for_dispatch_at, shipped_at, baseline_prod_week, baseline_prod_day, reschedule_count, last_rescheduled_at'
+const ORDER_COLS = 'id, kwitasie_nr, qty, qty_done, status, product_code, customer_code, department, due_date, prod_week, prod_day, send_week, send_day, description, priority_rank, ord_nr, "group", wood_type, notes, needs_review, original_item_code, ready_for_dispatch_at, shipped_at, baseline_prod_week, baseline_prod_day, reschedule_count, last_rescheduled_at, split_group, batch_index, batch_count'
 
 // Parse the order's Group column into every dept the order touches.
 // A "Chair, ST" / "Furn & St" Group lands the order on BOTH Wood and Steel
