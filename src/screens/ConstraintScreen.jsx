@@ -122,7 +122,7 @@ export default function ConstraintScreen() {
                           <div className="drum-name">
                             <ChevronRight size={14} strokeWidth={2.2} className="drum-chev" />
                             {r.name}
-                            {i === 0 && <span className="drum-tag">CONSTRAINT</span>}
+                            {i === 0 && <span className="drum-tag">Constraint / Herbie</span>}
                             {r.loadPct >= 100 && <span className="drum-tag over"><AlertTriangle size={10} /> over</span>}
                             {!r.active && <span className="drum-tag off">disabled</span>}
                           </div>
@@ -268,7 +268,7 @@ html, body {
 .drum-row.is-constraint .drum-rank { background: var(--navy); color: #fff; }
 .drum-name { font-size: 14px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .drum-sub { font-size: 11px; color: var(--ink-3); font-weight: 500; margin-top: 2px; text-transform: capitalize; }
-.drum-tag { font-size: 9px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px; border-radius: 999px; background: var(--navy); color: #fff; display: inline-flex; align-items: center; gap: 3px; }
+.drum-tag { font-size: 9px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px; border-radius: 999px; background: var(--navy); color: #fff; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 .drum-tag.over { background: var(--red-soft); color: var(--red); }
 .drum-tag.off { background: var(--surface-3); color: var(--ink-3); }
 .drum-bar { height: 8px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
