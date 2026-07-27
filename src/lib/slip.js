@@ -42,3 +42,58 @@ export function computeSlip(order, holidaySet, year) {
   const to = isoWeekDayToDate(year, order.prod_week, order.prod_day)
   return { daysBehind: workDaysBetween(from, to, holidaySet), count, baselineWeek: bw, baselineDay: bd }
 }
+
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+// Where SHOULD this order be TODAY to stay on schedule? Takes the order's
+// planned window (earliest → latest scheduled_date across its rows, or
+// prod-start + ttp_days as a fallback), works out what fraction has elapsed by
+// today, and turns it into an expected unit count. `behind` = units short of
+// that pace. A LEADING day-to-day indicator, distinct from the reschedule slip.
+export function computePace({ order, tracking, holidaySet, today, year }) {
+  const total = tracking.totalUnits
+  if (!total || total <= 0) return null
+
+  let minD = null
+  let maxD = null
+  for (const pt of tracking.parts) {
+    for (const sv of pt.steps) {
+      for (const r of sv.rows) {
+        const ds = r.scheduled_date
+        if (!ds) continue
+        if (minD == null || ds < minD) minD = ds
+        if (maxD == null || ds > maxD) maxD = ds
+      }
+    }
+  }
+
+  if (!minD && order.prod_week != null && order.prod_day != null) {
+    const start = isoWeekDayToDate(year, order.prod_week, order.prod_day)
+    minD = ymd(start)
+    const days = Math.max(1, order.ttp_days || 1)
+    const end = new Date(start)
+    let added = 0
+    let guard = 0
+    while (added < days - 1 && guard < 90) {
+      end.setDate(end.getDate() + 1)
+      const dow = end.getDay() === 0 ? 7 : end.getDay()
+      if (dow <= 5 && !holidaySet.has(ymd(end))) added += 1
+      guard += 1
+    }
+    maxD = ymd(end)
+  }
+  if (!minD) return null
+  if (!maxD || maxD < minD) maxD = minD
+
+  const windowDays = workDaysBetween(new Date(minD + 'T00:00:00'), new Date(maxD + 'T00:00:00'), holidaySet) + 1
+  let expectedFrac
+  if (today < minD) expectedFrac = 0
+  else if (today >= maxD) expectedFrac = 1
+  else {
+    const elapsed = workDaysBetween(new Date(minD + 'T00:00:00'), new Date(today + 'T00:00:00'), holidaySet) + 1
+    expectedFrac = Math.min(1, elapsed / windowDays)
+  }
+  const expectedUnits = Math.round(expectedFrac * total)
+  const behind = Math.max(0, expectedUnits - tracking.doneUnits)
+  return { expectedFrac, expectedUnits, behind, started: today >= minD }
+}

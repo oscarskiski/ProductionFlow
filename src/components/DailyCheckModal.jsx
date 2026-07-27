@@ -7,7 +7,7 @@ import { useAppData } from '../store/AppDataContext'
 import { buildOrderTracking, distributeQtyAcrossRows, setStepQtyDone } from '../lib/tracking'
 import { getCurrentUser } from '../lib/auth'
 import { isoWeekDayToDate } from '../lib/scheduling'
-import { computeSlip } from '../lib/slip'
+import { computeSlip, computePace } from '../lib/slip'
 import { DebouncedQtyStepper } from './QtyStepper'
 
 // ============================================================
@@ -113,7 +113,13 @@ export default function DailyCheckModal() {
       const productionComplete = tracking.parts.length > 0
         && tracking.parts.every((pt) => pt.total > 0 && pt.lastDone >= pt.total)
       if (productionComplete || leftover.length === 0) continue
-      out.push({ order: o, tracking, slip: computeSlip(o, holidaySet, year), planned })
+      out.push({
+        order: o,
+        tracking,
+        slip: computeSlip(o, holidaySet, year),
+        pace: computePace({ order: o, tracking, holidaySet, today, year }),
+        planned,
+      })
     }
     // Most behind first, then earliest planned day.
     out.sort((a, b) => (b.slip.daysBehind - a.slip.daysBehind) || (a.planned < b.planned ? -1 : 1))
@@ -197,9 +203,11 @@ export default function DailyCheckModal() {
 }
 
 function CheckRow({ item, onStepperChange }) {
-  const { order, tracking, slip, planned } = item
+  const { order, tracking, slip, planned, pace } = item
   const behind = slip.daysBehind > 0 || slip.count > 0
-  const [open, setOpen] = useState(behind) // slipping ones open by default
+  const isDone = tracking.doneUnits >= tracking.totalUnits && tracking.totalUnits > 0
+  // Collapsed by default — a clean scannable list; expand an order to tick it.
+  const [open, setOpen] = useState(false)
   const done = tracking.doneUnits
   const total = tracking.totalUnits
   const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0
@@ -222,8 +230,24 @@ function CheckRow({ item, onStepperChange }) {
             )}
           </div>
           <div className="dc-progress">
-            <div className="dc-bar"><i style={{ width: `${pct}%` }} /></div>
-            <span className="dc-ptext">{done}/{total} done · planned {planned}</span>
+            <div className="dc-bar">
+              <i style={{ width: `${pct}%` }} />
+              {pace && pace.started && pace.expectedFrac > 0 && pace.expectedFrac < 1 && (
+                <span
+                  className="dc-pace-marker"
+                  style={{ left: `${pace.expectedFrac * 100}%` }}
+                  title={`Should be ~${pace.expectedUnits}/${total} by now to stay on schedule`}
+                />
+              )}
+            </div>
+            <span className="dc-ptext">
+              {done}/{total} done · planned {planned}
+              {pace && pace.started && !isDone && (
+                pace.behind > 0
+                  ? <span className="dc-pace behind"> · should be {pace.expectedUnits} by now ({pace.behind} short)</span>
+                  : <span className="dc-pace ok"> · on pace</span>
+              )}
+            </span>
           </div>
         </div>
       </div>
@@ -270,7 +294,7 @@ const styles = `
 }
 @keyframes dc-fade { from { opacity: 0; } to { opacity: 1; } }
 .dc-card {
-  width: 100%; max-width: 720px; max-height: 88vh; display: flex; flex-direction: column;
+  width: 100%; max-width: 780px; max-height: 90vh; display: flex; flex-direction: column;
   background: var(--surface, #fff); border: 1px solid var(--hairline-2, rgba(26,29,36,0.12));
   border-radius: 20px; box-shadow: 0 24px 60px rgba(0,0,0,0.28); overflow: hidden;
   animation: dc-pop 220ms cubic-bezier(0.32,0.72,0,1);
@@ -281,28 +305,35 @@ const styles = `
 .dc-title { font-size: 18px; font-weight: 700; color: var(--ink, #1a1d24); letter-spacing: -0.02em; }
 .dc-sub { font-size: 12.5px; color: var(--ink-2, #4a4e5a); margin-top: 2px; }
 
-.dc-list { overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-.dc-order { border: 1px solid var(--hairline, rgba(26,29,36,0.08)); border-radius: 12px; background: var(--surface-2, #fbf9f5); overflow: hidden; }
-.dc-order.open { border-color: var(--hairline-2, rgba(26,29,36,0.12)); }
-.dc-order-head { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start; padding: 14px 16px; cursor: pointer; }
-.dc-ply { color: var(--ink-3, #8a8e99); display: flex; margin-top: 1px; transition: transform 160ms ease; }
+.dc-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.dc-order { flex-shrink: 0; border: 1px solid var(--hairline, rgba(26,29,36,0.08)); border-radius: 14px; background: var(--surface-2, #fbf9f5); overflow: hidden; }
+.dc-order.open { border-color: var(--hairline-2, rgba(26,29,36,0.12)); box-shadow: 0 2px 10px rgba(26,29,36,0.05); }
+.dc-order-head { display: grid; grid-template-columns: 22px 1fr; gap: 11px; align-items: start; padding: 16px 18px; cursor: pointer; }
+.dc-ply { color: var(--ink-3, #8a8e99); display: flex; margin-top: 2px; transition: transform 160ms ease; }
 .dc-order.open .dc-ply { transform: rotate(90deg); }
-.dc-order-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dc-order-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 6px; }
 .dc-onum { font-size: 12px; font-weight: 700; color: var(--ink-3, #8a8e99); letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
-.dc-oname { font-size: 15px; font-weight: 600; color: var(--ink, #1a1d24); letter-spacing: -0.015em; }
-.dc-slip { display: inline-flex; align-items: center; gap: 4px; background: var(--red-soft, rgba(210,83,58,0.10)); color: var(--red, #d2533a); font-size: 10.5px; font-weight: 800; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
-.dc-progress { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 10px; }
-.dc-bar { width: 100%; height: 7px; border-radius: 999px; background: var(--surface-3, #f1eee7); overflow: hidden; }
+.dc-oname { font-size: 15.5px; font-weight: 600; color: var(--ink, #1a1d24); letter-spacing: -0.015em; }
+.dc-slip { display: inline-flex; align-items: center; gap: 4px; background: var(--red-soft, rgba(210,83,58,0.10)); color: var(--red, #d2533a); font-size: 10.5px; font-weight: 800; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.dc-progress { display: flex; flex-direction: column; align-items: stretch; gap: 7px; margin-top: 12px; }
+.dc-bar { position: relative; width: 100%; height: 8px; border-radius: 999px; background: var(--surface-3, #f1eee7); overflow: hidden; }
 .dc-bar i { display: block; height: 100%; border-radius: 999px; background: var(--amber, #e89a3c); }
+.dc-pace-marker { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink, #1a1d24); opacity: 0.5; border-radius: 1px; transform: translateX(-1px); }
 .dc-ptext { font-size: 11.5px; color: var(--ink-3, #8a8e99); font-variant-numeric: tabular-nums; }
+.dc-pace { font-weight: 700; }
+.dc-pace.behind { color: var(--red, #d2533a); }
+.dc-pace.ok { color: var(--green, #4caf6a); }
 
-.dc-steps { padding: 4px 13px 12px 34px; display: flex; flex-direction: column; gap: 10px; }
-.dc-part-name { font-size: 12px; font-weight: 700; color: var(--ink-2, #4a4e5a); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.dc-steps { padding: 2px 18px 16px 20px; display: flex; flex-direction: column; }
+.dc-part { padding: 12px 0 4px; border-top: 1px solid var(--hairline, rgba(26,29,36,0.08)); }
+.dc-part:first-child { border-top: 0; padding-top: 4px; }
+.dc-part-name { font-size: 12.5px; font-weight: 700; color: var(--ink, #1a1d24); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
 .dc-asm { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 999px; background: var(--purple-soft, rgba(139,95,191,0.12)); color: var(--purple, #8b5fbf); }
-.dc-step { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; padding: 5px 0; }
-.dc-step.done { opacity: 0.55; }
-.dc-seq { width: 20px; height: 20px; border-radius: 6px; background: var(--surface-3, #f1eee7); color: var(--ink-2, #4a4e5a); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
-.dc-mach { font-size: 13px; color: var(--ink, #1a1d24); font-weight: 500; }
+.dc-step { display: grid; grid-template-columns: 24px 1fr auto; gap: 10px; align-items: center; padding: 8px 0; }
+.dc-step + .dc-step { border-top: 1px solid var(--hairline, rgba(26,29,36,0.05)); }
+.dc-step.done { opacity: 0.5; }
+.dc-seq { width: 22px; height: 22px; border-radius: 6px; background: var(--surface-3, #f1eee7); color: var(--ink-2, #4a4e5a); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.dc-mach { font-size: 13.5px; color: var(--ink, #1a1d24); font-weight: 500; }
 .dc-unsched { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3, #8a8e99); }
 
 .dc-clear { padding: 34px 20px; display: flex; flex-direction: column; align-items: center; gap: 12px; }

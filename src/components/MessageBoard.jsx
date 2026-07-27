@@ -92,6 +92,9 @@ const styles = `
 }
 .mb-msg .del:hover { background: var(--red-soft); color: var(--red); }
 .mb-msg .del .ic { width: 14px; height: 14px; }
+.mb-msg.clickable { cursor: pointer; transition: border-color 140ms ease, background 140ms ease; }
+.mb-msg.clickable:hover { border-color: var(--navy); background: var(--surface); }
+.mb-open { margin-top: 6px; font-size: 11.5px; font-weight: 700; color: var(--navy); }
 
 .mb-composer {
   display: flex; flex-direction: column;
@@ -153,6 +156,13 @@ function initials(name = '') {
     .slice(0, 2)
     .map((p) => p[0]?.toUpperCase() || '')
     .join('') || '?'
+}
+
+// The automated "midday tracking check" reminders are clickable — tapping one
+// pops the daily-check form (via the app-wide DailyCheckModal listener), so you
+// can run the check straight from the message even if you missed the popup.
+function isCheckMsg(m) {
+  return m.author_role === 'System' && /tracking check/i.test(m.body || '')
 }
 
 function timeAgo(iso) {
@@ -330,25 +340,35 @@ export default function MessageBoard() {
             {messages.length === 0 && (
               <div className="mb-empty">No announcements yet. Updates posted here will appear for everyone.</div>
             )}
-            {messages.map((m) => (
-              <div key={m.id} className="mb-msg">
-                <div className={`avatar ${m.author_role === 'Boss' ? 'boss' : ''}`}>{initials(m.author_name)}</div>
-                <div className="content">
-                  <div className="meta-row">
-                    <span className="name">{m.author_name}</span>
-                    <span className={`role-pill ${m.author_role === 'Boss' ? 'boss' : ''}`}>{m.author_role}</span>
-                    {m.author_dept && <span className="dept">· {deptLabel(m.author_dept)}</span>}
-                    <span className="ts">{timeAgo(m.created_at)}</span>
+            {messages.map((m) => {
+              const actionable = isCheckMsg(m) && mayPost
+              return (
+                <div
+                  key={m.id}
+                  className={`mb-msg ${actionable ? 'clickable' : ''}`}
+                  onClick={actionable ? () => window.dispatchEvent(new Event('open-daily-check')) : undefined}
+                  role={actionable ? 'button' : undefined}
+                  title={actionable ? 'Open the daily tracking check' : undefined}
+                >
+                  <div className={`avatar ${m.author_role === 'Boss' ? 'boss' : ''}`}>{initials(m.author_name)}</div>
+                  <div className="content">
+                    <div className="meta-row">
+                      <span className="name">{m.author_name}</span>
+                      <span className={`role-pill ${m.author_role === 'Boss' ? 'boss' : ''}`}>{m.author_role}</span>
+                      {m.author_dept && <span className="dept">· {deptLabel(m.author_dept)}</span>}
+                      <span className="ts">{timeAgo(m.created_at)}</span>
+                    </div>
+                    <div className="body">{m.body}</div>
+                    {actionable && <div className="mb-open">Open tracking check →</div>}
                   </div>
-                  <div className="body">{m.body}</div>
+                  {isBoss && (
+                    <button className="del" onClick={(e) => { e.stopPropagation(); handleDelete(m.id) }} aria-label="Delete message">
+                      <Trash2 size={14} className="ic" />
+                    </button>
+                  )}
                 </div>
-                {isBoss && (
-                  <button className="del" onClick={() => handleDelete(m.id)} aria-label="Delete message">
-                    <Trash2 size={14} className="ic" />
-                  </button>
-                )}
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       </div>

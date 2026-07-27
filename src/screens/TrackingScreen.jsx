@@ -15,7 +15,7 @@ import {
   ChevronRight, ChevronLeft, ChevronDown, Expand, Check, Minus, X, CalendarPlus, PackageCheck,
   CalendarDays, AlertTriangle, ClipboardCheck,
 } from 'lucide-react'
-import { computeSlip } from '../lib/slip'
+import { computeSlip, computePace } from '../lib/slip'
 
 // Has any real production happened on this order yet? Moving UNSTARTED work
 // around is just planning and must NOT flag the order as "behind" — only once a
@@ -159,7 +159,11 @@ html, body {
 .progress-bar i { display: block; height: 100%; background: var(--amber); border-radius: 3px; transition: width 200ms ease; }
 .progress-bar.done i { background: var(--green); }
 .progress-bar.behind i { background: var(--red); }
-.progress-text { font-size: 11px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 60px; }
+.progress-text { font-size: 11px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 60px; white-space: nowrap; }
+.pace-marker { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); opacity: 0.5; border-radius: 1px; transform: translateX(-1px); }
+.pace-lbl { font-weight: 700; }
+.pace-lbl.behind { color: var(--red); }
+.pace-lbl.ok { color: var(--green); }
 .ord-head .right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .ord-head .right .wkdone { font-size: 10px; font-weight: 700; color: var(--ink-3); letter-spacing: 0.06em; }
 .ord-head .right .qty { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }
@@ -409,7 +413,7 @@ function PartRow({ partView, index, defaultOpen, onStepperChange }) {
 }
 
 function OrderCard({
-  tracking, order, slip, defaultOpen, currentWeek, leftoverSteps,
+  tracking, order, slip, pace, defaultOpen, currentWeek, leftoverSteps,
   productionComplete, markReadySaving,
   onStepperChange, onOpenReschedule, onMarkReady,
 }) {
@@ -464,8 +468,22 @@ function OrderCard({
           <div className="progress">
             <div className={`progress-bar ${isDone ? 'done' : isBehind ? 'behind' : ''}`}>
               <i style={{ width: `${Math.min(100, pct)}%` }} />
+              {pace && pace.started && pace.expectedFrac > 0 && pace.expectedFrac < 1 && (
+                <span
+                  className="pace-marker"
+                  style={{ left: `${pace.expectedFrac * 100}%` }}
+                  title={`Should be ~${pace.expectedUnits}/${tracking.totalUnits} by now to stay on schedule`}
+                />
+              )}
             </div>
-            <span className="progress-text">{tracking.doneUnits}/{tracking.totalUnits} done</span>
+            <span className="progress-text">
+              {tracking.doneUnits}/{tracking.totalUnits} done
+              {pace && pace.started && !isDone && (
+                pace.behind > 0
+                  ? <span className="pace-lbl behind"> · {pace.behind} behind pace</span>
+                  : <span className="pace-lbl ok"> · on pace</span>
+              )}
+            </span>
           </div>
         </div>
         <div className="right">
@@ -822,14 +840,19 @@ export default function TrackingScreen() {
         const tracking = buildOrderTracking({
           order: o, parts, stepsByPart, scheduleByOrderStep, machineById,
         })
-        return { order: o, tracking, slip: computeSlip(o, holidaySet, prodYear) }
+        return {
+          order: o,
+          tracking,
+          slip: computeSlip(o, holidaySet, prodYear),
+          pace: computePace({ order: o, tracking, holidaySet, today, year: prodYear }),
+        }
       })
       .sort((a, b) => {
         const aCr = a.order.cr ?? Infinity
         const bCr = b.order.cr ?? Infinity
         return aCr - bCr
       })
-  }, [baseFiltered, prodDate, prodYear, productByCode, partsByProduct, stepsByPart, scheduleByOrderStep, holidaySet])
+  }, [baseFiltered, prodDate, prodYear, productByCode, partsByProduct, stepsByPart, scheduleByOrderStep, holidaySet, today])
 
   const stats = useMemo(() => {
     const ordersActive = visible.length
@@ -1131,7 +1154,7 @@ export default function TrackingScreen() {
             </div>
           ) : (
             <div className="ord-list">
-              {visible.map(({ order, tracking, slip }, i) => {
+              {visible.map(({ order, tracking, slip, pace }, i) => {
                 const leftoverSteps = []
                 for (const pt of tracking.parts) {
                   for (const sv of pt.steps) {
@@ -1150,6 +1173,7 @@ export default function TrackingScreen() {
                     order={order}
                     tracking={tracking}
                     slip={slip}
+                    pace={pace}
                     defaultOpen={query.trim() ? true : (expandSignal.at ? expandSignal.all : i < 2)}
                     currentWeek={currentWeek}
                     leftoverSteps={leftoverSteps}
